@@ -183,10 +183,18 @@ jobs:
             cp xl.ps1 dist/payload/
           fi
 
+          # Image packing tools (mkxnuimg.py in root, mkpayload.py in xnu_loader & xnuloader)
+          cp mkxnuimg.py dist/payload/mkxnuimg.py
+          chmod +x dist/payload/mkxnuimg.py
+
+          mkdir -p dist/payload/xnuloader dist/payload/xnu_loader
+          cp xnuloader/mkpayload.py dist/payload/xnuloader/mkpayload.py
+          cp xnuloader/mkpayload.py dist/payload/xnu_loader/mkpayload.py
+          chmod +x dist/payload/xnuloader/mkpayload.py dist/payload/xnu_loader/mkpayload.py
+
           # Garnet prebuilts & boot image
           if [ -d devices/garnet/prebuilt ]; then
-            cp devices/garnet/prebuilt/device-tree.dtb dist/payload/prebuilt/ || true
-            cp devices/garnet/prebuilt/SILICIUM_UEFI.fd dist/payload/prebuilt/ || true
+            cp -a devices/garnet/prebuilt/. dist/payload/prebuilt/ || true
             if [ -f devices/garnet/prebuilt/garnet-boot.img ]; then
               cp devices/garnet/prebuilt/garnet-boot.img dist/payload/
             fi

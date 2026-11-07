@@ -33,9 +33,9 @@
  * recent part (a ring); room is left for what is appended on the way out (the kernel message
  * buffer, a panic's text). loader_log_linearize() puts the pieces in order before returning.
  */
-#define LOADER_LOG_SIZE (1536 * 1024)
-#define LOADER_LOG_HEAD (256 * 1024)
-#define LOADER_LOG_RING (1024 * 1024)
+#define LOADER_LOG_SIZE (16 * 1024 * 1024)
+#define LOADER_LOG_HEAD (2 * 1024 * 1024)
+#define LOADER_LOG_RING (14 * 1024 * 1024)
 
 #if defined(GENERIC_GIC_V3_IRQ)
 extern void gic_v3_irq_quiesce(void);
@@ -158,7 +158,7 @@ loader_log_put_locked(char c)
 static void
 loader_log_linearize(void)
 {
-	static const char note[] = "\n\n[... the log between the first 256 KB and the last 1 MB was dropped ...]\n\n";
+	static const char note[] = "\n\n[... the log between the first 2 MB and the last 14 MB was dropped ...]\n\n";
 	uint32_t older = LOADER_LOG_RING - loader_log_ring_at, n = LOADER_LOG_HEAD;
 
 	if (loader_log_linear) {

@@ -26,6 +26,8 @@ ap.add_argument('--mode', default='RELEASE')
 args = ap.parse_args()
 
 PREBUILT = os.path.join(HERE, 'devices', args.device, 'prebuilt')
+if not os.path.isdir(PREBUILT) and os.path.isdir(os.path.join(HERE, 'prebuilt')):
+    PREBUILT = os.path.join(HERE, 'prebuilt')
 FD_BASE = 0xa7100000 if args.device == 'garnet' else 0x9FD00000
 FD_SIZE = 0x300000 if args.device == 'garnet' else 0x200000
 PAYLOAD_BASE = 0xF4000000 if args.device == 'garnet' else 0xF0000000

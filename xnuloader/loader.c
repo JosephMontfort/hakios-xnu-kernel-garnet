@@ -88,7 +88,7 @@ static efi_system_table *ST;
 static efi_boot_services *BS;
 static efi_handle IMAGE;
 
-static char log_buf[256 * 1024];
+static char log_buf[16 * 1024 * 1024];
 static uint32_t log_len;
 
 void *
@@ -306,7 +306,7 @@ find_log_partition(void)
  * fetches over USB (fastboot get_staged).
  */
 /* aligned for any firmware's block I/O: U-Boot's wants a buffer aligned to the block size (media->io_align) */
-static char out_buf[2 * 1024 * 1024] __attribute__((aligned(0x2000)));
+static char out_buf[16 * 1024 * 1024] __attribute__((aligned(0x2000)));
 /* the storage's reads for the kernel land here (block_poll), and nothing else may be put in it */
 #define BLOCK_BUFFER_SIZE  (4u << 20)
 static uint8_t block_buffer[BLOCK_BUFFER_SIZE] __attribute__((aligned(0x2000)));
@@ -315,7 +315,7 @@ static uint8_t block_buffer[BLOCK_BUFFER_SIZE] __attribute__((aligned(0x2000)));
  * mailbox buffer, and a read-back landing in it while the kernel runs on the other core would
  * overwrite data the kernel is still copying out of it.
  */
-static uint8_t log_verify[2 * 1024 * 1024 + 8192] __attribute__((aligned(0x2000)));
+static uint8_t log_verify[4 * 1024 * 1024 + 8192] __attribute__((aligned(0x2000)));
 static const char *staged_data = out_buf;   /* what "upload" sends: normally the log in out_buf */
 static uint64_t staged_len;
 
