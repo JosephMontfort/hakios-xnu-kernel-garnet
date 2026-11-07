@@ -277,8 +277,15 @@ hakios_input_init(void)
 {
 	int major = cdevsw_add(-1, &touch_cdevsw);
 
-	if (major < 0 || devfs_make_node(makedev(major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "hakios-touch") == NULL) {
-		printf("hakios-touch: cannot create the device\n");
+	if (major < 0) {
+		printf("hakios-touch: cannot create the cdev\n");
+	} else {
+		if (devfs_make_node(makedev(major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "hakios-touch") == NULL) {
+			printf("hakios-touch: cannot create the device\n");
+		}
+		if (devfs_make_node(makedev(major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "redwood-touch") == NULL) {
+			printf("redwood-touch: cannot create the device\n");
+		}
 	}
 	exit_call = thread_call_allocate(exit_hold_elapsed, NULL);
 	hakios_cpufreq_init();

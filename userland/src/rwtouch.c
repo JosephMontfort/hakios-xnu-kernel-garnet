@@ -160,7 +160,10 @@ main(int argc, char **argv)
 	mach_timebase_info(&timebase);
 	device = open(HAKIOS_TOUCH_DEVICE, O_RDWR);
 	if (device < 0) {
-		perror("rwtouch: " HAKIOS_TOUCH_DEVICE);
+		device = open("/dev/redwood-touch", O_RDWR);
+	}
+	if (device < 0) {
+		perror("rwtouch: " HAKIOS_TOUCH_DEVICE " and /dev/redwood-touch");
 		return 1;
 	}
 	for (int i = 1; i < argc; i++) {

@@ -352,6 +352,7 @@ hakios_audio_init(void)
 		printf("hakios-audio: cannot create the device\n");
 		return;
 	}
+	(void)devfs_make_node(makedev(major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "redwood-audio");
 	report_call = thread_call_allocate(audio_report, NULL);
 	audio_recording_init();
 	hakios_virtio_sound_init();

@@ -744,12 +744,16 @@ gpu_draws(void)
 	const char *argument;
 	io_service_t gpu;
 
-	/* ... or through Metal (boot-arg metal=1 with the GPU kept: HakiosMetal.bundle, an image built with METAL_PLUGIN) */
-	if (access("/redwood/lib/HakiosMetal.bundle/HakiosMetal", R_OK) == 0 &&
+	/* ... or through Metal (boot-arg metal=1 with the GPU kept: HakiosMetal or RedwoodMetal) */
+	if ((access("/redwood/lib/HakiosMetal.bundle/HakiosMetal", R_OK) == 0 ||
+	     access("/redwood/lib/RedwoodMetal.bundle/RedwoodMetal", R_OK) == 0) &&
 	    sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0) {
 		for (argument = arguments; (argument = strstr(argument, "metal=")) != NULL; argument += 6) {
 			if ((argument == arguments || argument[-1] == ' ') && argument[6] != '0') {
 				gpu = IOServiceGetMatchingService(0, IOServiceMatching("HakiosGPU"));
+				if (gpu == 0) {
+					gpu = IOServiceGetMatchingService(0, IOServiceMatching("RedwoodGPU"));
+				}
 				if (gpu != 0) {
 					IOObjectRelease(gpu);
 					return true;
@@ -758,7 +762,11 @@ gpu_draws(void)
 		}
 	}
 	size = sizeof(arguments) - 1;
-	if (access(HAKIOS_GL, R_OK) != 0) {
+	const char *gl_path = HAKIOS_GL;
+	if (access(gl_path, R_OK) != 0) {
+		gl_path = "/redwood/lib/libredwood-gl.dylib";
+	}
+	if (access(gl_path, R_OK) != 0) {
 		return false;
 	}
 	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0) {
@@ -769,6 +777,9 @@ gpu_draws(void)
 		}
 	}
 	gpu = IOServiceGetMatchingService(0, IOServiceMatching("HakiosGPU"));
+	if (gpu == 0) {
+		gpu = IOServiceGetMatchingService(0, IOServiceMatching("RedwoodGPU"));
+	}
 	if (gpu != 0) {
 		IOObjectRelease(gpu);
 	}

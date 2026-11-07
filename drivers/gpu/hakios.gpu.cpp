@@ -330,11 +330,34 @@ HakiosGPU::start(IOService * provider)
 	return true;
 }
 
+class RedwoodGPU : public IOService
+{
+	OSDeclareDefaultStructors(RedwoodGPU);
+
+public:
+	virtual bool start(IOService * provider) APPLE_KEXT_OVERRIDE;
+};
+
+OSDefineMetaClassAndStructors(RedwoodGPU, IOService);
+
+bool
+RedwoodGPU::start(IOService * provider)
+{
+	if (!IOService::start(provider)) {
+		return false;
+	}
+	setProperty(kIOUserClientClassKey, "RedwoodGPUUserClient");
+	setName("RedwoodGPU");
+	registerService();
+	return true;
+}
+
 void
 HakiosGPUStart(void)
 {
 	IOService * provider = IOService::getPlatform();
 	HakiosGPU * gpu;
+	RedwoodGPU * rgpu;
 	uint32_t cached = 0;
 
 	gGPUCached = PE_parse_boot_argn("gpu_cached", &cached, sizeof(cached)) && cached != 0;
@@ -350,6 +373,18 @@ HakiosGPUStart(void)
 		IOLog("HakiosGPU: the service did not start\n");
 	}
 	gpu->release();
+
+	/* Dual compatibility: register RedwoodGPU service for legacy userland */
+	rgpu = OSTypeAlloc(RedwoodGPU);
+	if (rgpu != NULL && provider != NULL && rgpu->init() && rgpu->attach(provider)) {
+		if (!rgpu->start(provider)) {
+			rgpu->detach(provider);
+			IOLog("RedwoodGPU: the compatibility service did not start\n");
+		}
+	}
+	if (rgpu != NULL) {
+		rgpu->release();
+	}
 }
 
 /* The run is ending (hakios.adreno.c): nobody is in the middle of anything when the GPU goes. */
@@ -458,6 +493,13 @@ public:
 };
 
 OSDefineMetaClassAndStructors(HakiosGPUUserClient, IOUserClient);
+
+class RedwoodGPUUserClient : public HakiosGPUUserClient
+{
+	OSDeclareDefaultStructors(RedwoodGPUUserClient);
+};
+
+OSDefineMetaClassAndStructors(RedwoodGPUUserClient, HakiosGPUUserClient);
 
 bool
 HakiosGPUUserClient::initWithTask(task_t owningTask, void * securityID, UInt32 type, OSDictionary * properties)

@@ -1736,6 +1736,7 @@ for_darwin(void)
 		say("mic: /dev/hakios-mic cannot be made\n");
 		return;
 	}
+	(void)devfs_make_node(makedev(major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "redwood-mic");
 	say("mic: THE MICROPHONE IS DARWIN'S (/dev/hakios-mic) from here on, until the run ends: it listens only while Darwin records\n");
 	while (!stopping) {
 		uint64_t began, ns;

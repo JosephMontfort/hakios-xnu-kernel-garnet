@@ -2024,8 +2024,8 @@ publishAccelerator(IOService * provider)
 		 * Metal for the screen; until that device can draw, a screen drawn without it is the working one.
 		 */
 		if (PE_parse_boot_argn("metal", &metal, sizeof(metal)) && metal != 0) {
-			char plugin_name[64] = "HakiosMetal";
-			char plugin_class[64] = "HakiosMetalDevice";
+			char plugin_name[64] = "RedwoodMetal";
+			char plugin_class[64] = "RedwoodMetalDevice";
 
 			PE_parse_boot_argn("metal_name", plugin_name, sizeof(plugin_name));
 			PE_parse_boot_argn("metal_class", plugin_class, sizeof(plugin_class));

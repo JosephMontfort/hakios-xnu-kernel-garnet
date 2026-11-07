@@ -829,6 +829,7 @@ serve(void)
 		say("haptic: /dev/hakios-haptic cannot be made\n");
 		return;
 	}
+	(void)devfs_make_node(makedev(major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "redwood-haptic");
 	say("haptic: THE MOTOR PLAYS WHAT DARWIN PLAYS ON ITS ACTUATOR (/dev/hakios-haptic) from here on, until the run ends\n");
 	while (!broken) {
 		uint64_t now = now_us();

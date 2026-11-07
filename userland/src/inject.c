@@ -922,7 +922,10 @@ input_thread(__unused void *arg)
 	}
 	device = open(HAKIOS_TOUCH_DEVICE, O_RDONLY);
 	if (device < 0) {
-		say("hakios: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
+		device = open("/dev/redwood-touch", O_RDONLY);
+	}
+	if (device < 0) {
+		say("hakios: input: %s: %s (and /dev/redwood-touch: %s)\n", HAKIOS_TOUCH_DEVICE, strerror(errno), strerror(errno));
 		return NULL;
 	}
 	sleep(3);                       /* let backboardd get as far as starting its event server */
@@ -1044,7 +1047,11 @@ opengl_es(void)
 	void *library;
 	int wanted = -1, told = 0;
 
-	if (access(HAKIOS_GL, R_OK) != 0) {
+	const char *gl_path = HAKIOS_GL;
+	if (access(gl_path, R_OK) != 0) {
+		gl_path = "/redwood/lib/libredwood-gl.dylib";
+	}
+	if (access(gl_path, R_OK) != 0) {
 		return;                                 /* (an image built without it) */
 	}
 	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0) {
@@ -1059,6 +1066,9 @@ opengl_es(void)
 	}
 	if (wanted < 0) {
 		gpu = IOServiceGetMatchingService(0, IOServiceMatching("HakiosGPU"));
+		if (gpu == 0) {
+			gpu = IOServiceGetMatchingService(0, IOServiceMatching("RedwoodGPU"));
+		}
 		wanted = gpu != 0;
 		if (gpu != 0) {
 			IOObjectRelease(gpu);
@@ -1068,14 +1078,21 @@ opengl_es(void)
 		say("hakios: %s: CoreAnimation keeps its software renderer\n", told ? "gl=0" : "no GPU to draw with");
 		return;
 	}
-	if ((library = dlopen(HAKIOS_GL, RTLD_NOW)) == NULL) {
-		say("hakios: %s: %s\n", HAKIOS_GL, dlerror());
+	if ((library = dlopen(gl_path, RTLD_NOW)) == NULL) {
+		say("hakios: %s: %s\n", gl_path, dlerror());
 		return;
 	}
 	gl_loaded = 1;
 	gl_function_values = (void (*)(void *, unsigned, unsigned, size_t, size_t, const float *))dlsym(library,
 	    "hakios_gl_function_values");
+	if (gl_function_values == NULL) {
+		gl_function_values = (void (*)(void *, unsigned, unsigned, size_t, size_t, const float *))dlsym(library,
+		    "redwood_gl_function_values");
+	}
 	gl_function_refused = (void (*)(unsigned))dlsym(library, "hakios_gl_function_refused");
+	if (gl_function_refused == NULL) {
+		gl_function_refused = (void (*)(unsigned))dlsym(library, "redwood_gl_function_refused");
+	}
 }
 
 /*

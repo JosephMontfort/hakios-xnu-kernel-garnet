@@ -588,6 +588,7 @@ serve(void)
 		say("torch: /dev/hakios-torch cannot be made\n");
 		return;
 	}
+	(void)devfs_make_node(makedev(major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "redwood-torch");
 	say("torch: THE LIGHT IS DARWIN'S (/dev/hakios-torch) from here on, until the run ends: at most Android's %u mA, at most %u s "
 	    "at a time\n", ANDROID_TORCH_MA, max_secs);
 	while (!broken) {

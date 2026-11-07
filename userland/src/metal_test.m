@@ -217,7 +217,7 @@ accelerators(void)
 static void
 gpu_services(void)
 {
-	static const char *const classes[] = { "HakiosGPU", "IOGPU", "AGXAccelerator", "IOAccelerator" };
+	static const char *const classes[] = { "HakiosGPU", "RedwoodGPU", "IOGPU", "AGXAccelerator", "IOAccelerator" };
 	int found = 0;
 
 	for (size_t i = 0; i < sizeof(classes) / sizeof(classes[0]); i++) {
@@ -426,8 +426,12 @@ make_eagl(void)
 	 * it replaced it says itself in lines "hakios-gl:". Without this, EAGLContext here would be
 	 * Darwin's own, which is AppleMetalGLRenderer over Metal -- the thing that is missing.
 	 */
-	if (access(HAKIOS_GL, R_OK) != 0) {
-		printf("metal_test:   %s is not in this image: build it with GL=1\n", HAKIOS_GL);
+	const char *gl_path = HAKIOS_GL;
+	if (access(gl_path, R_OK) != 0) {
+		gl_path = "/redwood/lib/libredwood-gl.dylib";
+	}
+	if (access(gl_path, R_OK) != 0) {
+		printf("metal_test:   neither %s nor /redwood/lib/libredwood-gl.dylib is in this image: build it with GL=1\n", HAKIOS_GL);
 		return nil;
 	}
 	/*
@@ -440,11 +444,11 @@ make_eagl(void)
 		setenv("OSMESA_SOFTWARE", "1", 1);
 		printf("metal_test:   OSMESA_SOFTWARE=1: Mesa's software driver, not the GPU\n");
 	}
-	if (dlopen(HAKIOS_GL, RTLD_NOW) == NULL) {
-		printf("metal_test:   %s: %s\n", HAKIOS_GL, dlerror());
+	if (dlopen(gl_path, RTLD_NOW) == NULL) {
+		printf("metal_test:   %s: %s\n", gl_path, dlerror());
 		return nil;
 	}
-	printf("metal_test:   %s loaded; EAGLContext is ours now\n", HAKIOS_GL);
+	printf("metal_test:   %s loaded; EAGLContext is ours now\n", gl_path);
 	gl = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
 
 	if (gl == nil) {

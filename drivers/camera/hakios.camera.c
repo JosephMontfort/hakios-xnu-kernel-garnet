@@ -4039,6 +4039,9 @@ camdev_make(void)
 	int major = cdevsw_add(-1, &camdev_cdevsw);
 
 	camdev_made = major >= 0 && devfs_make_node(makedev(major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "hakios-camera") != NULL;
+	if (camdev_made) {
+		(void)devfs_make_node(makedev(major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "redwood-camera");
+	}
 }
 
 /*
