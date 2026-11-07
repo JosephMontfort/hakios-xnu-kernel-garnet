@@ -1218,6 +1218,13 @@ hakios_init(void)
 		if (strstr(arguments, "metal_watch=1") != NULL || strstr(arguments, "ca_metallib=") != NULL) {
 			watch_metallib_lookups(arguments);
 		}
+		/* Disable dirty regions so icons do not disappear after idling */
+		setenv("CA_DISABLE_DIRTY_REGIONS", "1", 1);
+		say("hakios: CA_DISABLE_DIRTY_REGIONS=1 enabled for backboardd\n");
+		extern int memorystatus_control(uint32_t command, int32_t pid, uint32_t flags, void *buffer, size_t buffersize);
+		#define MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK 4
+		memorystatus_control(MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK, getpid(), 1024, NULL, 0);
+		say("hakios: set backboardd Jetsam memory limit to 1024 MB\n");
 		opengl_es();
 		window_server_fixes();
 		/*

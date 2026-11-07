@@ -62,19 +62,29 @@ private:
     mach_timebase_info_data_t timebase_{};
 };
 
+io_service_t findGpuService() {
+    for (const char* name : {"HakiosGPU", "RedwoodGPU", "SweetAdreno630"}) {
+        io_service_t s = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching(name));
+        if (s != 0) {
+            return s;
+        }
+    }
+    return 0;
+}
+
 }  // namespace
 
 std::unique_ptr<Transport> openKernelGpu(std::string* why) {
-    io_service_t s = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("HakiosGPU"));
+    io_service_t s = findGpuService();
     if (s == 0) {
-        *why = "no HakiosGPU service: the kernel has not started the GPU (gpu=1, the firmware in fw-gpu/, the phone)";
+        *why = "no HakiosGPU/RedwoodGPU/SweetAdreno630 service: the kernel has not started the GPU (gpu=1, the firmware in fw-gpu/, the phone)";
         return nullptr;
     }
     io_connect_t c = 0;
     kern_return_t r = IOServiceOpen(s, mach_task_self(), 0, &c);
     IOObjectRelease(s);
     if (r != KERN_SUCCESS) {
-        *why = "HakiosGPU would not open: error " + std::to_string(r);
+        *why = "the GPU service would not open: error " + std::to_string(r);
         return nullptr;
     }
     return std::unique_ptr<Transport>(new KernelGpu(c));

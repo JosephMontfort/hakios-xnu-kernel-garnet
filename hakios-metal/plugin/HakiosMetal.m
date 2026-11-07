@@ -58,10 +58,29 @@ deviceInit(id self, SEL _cmd, unsigned int port)
 	return self;
 }
 
+#ifdef HAKIOS_METAL_GPU
+typedef struct hakios_metal_device hakios_metal_device;
+static hakios_metal_device *gpu(void);
+uint64_t hakios_metal_gpu_id(hakios_metal_device *device);
+#endif
+
 static id
 deviceName(__unused id self, __unused SEL _cmd)
 {
-	return @"HakiOS Adreno 642L (Metal: a device that exists, nothing more)";
+#ifdef HAKIOS_METAL_GPU
+	hakios_metal_device *dev = gpu();
+	if (dev != NULL) {
+		uint64_t chip = hakios_metal_gpu_id(dev);
+		if (chip == 0x07010000) {
+			return @"HakiOS Adreno 710";
+		} else if (chip == 0x06060201) {
+			return @"HakiOS Adreno 725";
+		} else if (chip == 0x06030500) {
+			return @"HakiOS Adreno 642L";
+		}
+	}
+#endif
+	return @"HakiOS Adreno GPU (Metal)";
 }
 
 static uint64_t

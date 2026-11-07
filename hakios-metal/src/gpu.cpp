@@ -74,21 +74,51 @@ std::unique_ptr<Bo> Gpu::newBo(uint64_t size, uint32_t flags, int* error) {
 }
 
 std::unique_ptr<Bo> Gpu::surfaceBo(uint32_t surfaceId, SurfaceInfo* out, int* error) {
-    HakiosSurface s{};
-    s.surface = surfaceId;
-    if ((*error = t_->call(kHakiosSurface, &s, sizeof(s))) != 0) {
-        return nullptr;
+    *error = 0;
+    uint32_t handle = 0;
+    uint64_t iova = 0;
+    // SWEET's SweetAdreno630 answers 0x71 with the wider sweet_gpu_surface_bo; try it
+    // first, then upstream hakios's 0x7e. ENOSYS on 0x71 means an older/other driver.
+    {
+        SweetSurfaceBo s{};
+        s.surface_id = surfaceId;
+        if (t_->call(kSweetSurfaceBo, &s, sizeof(s)) == 0) {
+            handle = s.handle;
+            iova = s.iova;
+            *out = SurfaceInfo{s.size, s.offset, s.rowBytes, s.width, s.height, s.pixelFormat, s.planes};
+        }
     }
-    MsmGemInfo info{};
-    info.handle = s.handle;
-    info.info = kInfoGetIova;
-    if ((*error = t_->call(kGemInfo, &info, sizeof(info))) != 0) {
-        DrmGemClose c{s.handle, 0};
-        t_->call(kGemClose, &c, sizeof(c));
-        return nullptr;
+    if (handle == 0) {
+        HakiosSurface s{};
+        s.surface = surfaceId;
+        if ((*error = t_->call(kHakiosSurface, &s, sizeof(s))) != 0) {
+            return nullptr;
+        }
+        handle = s.handle;
+        *out = SurfaceInfo{s.size, s.offset, s.rowBytes, s.width, s.height, s.pixelFormat, s.planes};
+        MsmGemInfo info{};
+        info.handle = handle;
+        info.info = kInfoGetIova;
+        if ((*error = t_->call(kGemInfo, &info, sizeof(info))) != 0) {
+            DrmGemClose c{handle, 0};
+            t_->call(kGemClose, &c, sizeof(c));
+            return nullptr;
+        }
+        iova = info.value;
+    } else {
+        if (iova == 0) {
+            MsmGemInfo info{};
+            info.handle = handle;
+            info.info = kInfoGetIova;
+            if ((*error = t_->call(kGemInfo, &info, sizeof(info))) != 0) {
+                DrmGemClose c{handle, 0};
+                t_->call(kGemClose, &c, sizeof(c));
+                return nullptr;
+            }
+            iova = info.value;
+        }
     }
-    *out = SurfaceInfo{s.size, s.offset, s.rowBytes, s.width, s.height, s.pixelFormat, s.planes};
-    return std::unique_ptr<Bo>(new Bo(*this, s.handle, s.size, info.value, t_->map(s.handle, s.size)));
+    return std::unique_ptr<Bo>(new Bo(*this, handle, out->size, iova, t_->map(handle, out->size)));
 }
 
 void Gpu::disown(std::unique_ptr<Bo> bo) {

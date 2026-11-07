@@ -775,6 +775,59 @@ gpu_draws(void)
 	return gpu != 0;
 }
 
+static void
+noop_void(id self, SEL selector)
+{
+	(void)self;
+	(void)selector;
+}
+
+static id
+noop_nil(id self, SEL selector)
+{
+	(void)self;
+	(void)selector;
+	return nil;
+}
+
+static IMP
+hook_method(char kind, const char *class_name, const char *selector, IMP replacement)
+{
+	Class cls = objc_getClass(class_name);
+	if (!cls) {
+		return NULL;
+	}
+	SEL sel = sel_registerName(selector);
+	Method method = (kind == '+') ? class_getClassMethod(cls, sel) : class_getInstanceMethod(cls, sel);
+	if (!method) {
+		return NULL;
+	}
+	IMP original = method_setImplementation(method, replacement);
+	say("hakios: hooked %c[%s %s]\n", kind, class_name, selector);
+	return original;
+}
+
+static bool sleep_hooked = false;
+
+static void
+neutralize_sleep_spin(void)
+{
+	if (sleep_hooked) {
+		return;
+	}
+	Class cls = objc_getClass("HKSPXPCConnectionProvider");
+	if (!cls) {
+		return;
+	}
+	hook_method('-', "HKSPXPCConnectionProvider", "connection", (IMP)noop_nil);
+	hook_method('-', "HKSPXPCConnectionProvider", "invalidate", (IMP)noop_void);
+	hook_method('-', "HKSPXPCConnectionProvider", "connectionInvalidated", (IMP)noop_void);
+	hook_method('-', "HKSPXPCConnectionProvider", "connectionInterrupted", (IMP)noop_void);
+	hook_method('-', "HKSPXPCConnectionProvider", "sendMessage:errorHandler:", (IMP)noop_void);
+	sleep_hooked = true;
+	say("hakios: HKSPXPCConnectionProvider neutralized (infinite sleepd retry storm halted)\n");
+}
+
 /*
  * The clock of the lock screen is a "vibrant" view (BSUIVibrancyEffectView in BaseBoardUI): its
  * digits are not drawn, they are a mask -- a copy of them through a colour matrix that keeps red
@@ -2115,6 +2168,12 @@ caenv(void)
 	}
 }
 
+static BOOL
+return_yes(__unused id self, __unused SEL _cmd)
+{
+	return YES;
+}
+
 __attribute__((constructor))
 static void
 hakios_springboard_init(void)
@@ -2127,6 +2186,21 @@ hakios_springboard_init(void)
 	if (name == NULL) {
 		return;
 	}
+
+	/*
+	 * Allow @3x wallpaper bundles to be loaded across all wallpaper and poster processes.
+	 */
+	Class ud_cls = objc_getClass("NSUserDefaults");
+	if (ud_cls) {
+		SEL sel = sel_registerName("wk_ignoreLogicalScreenClassForWallpaperBundle");
+		Method m = class_getInstanceMethod(ud_cls, sel);
+		if (m) {
+			method_setImplementation(m, (IMP)return_yes);
+		} else {
+			class_addMethod(ud_cls, sel, (IMP)return_yes, "B@:");
+		}
+	}
+
 	if (strcmp(name, "SpringBoard") != 0) {
 		static char who[64];
 
@@ -2141,6 +2215,12 @@ hakios_springboard_init(void)
 		});
 		return;
 	}
+#ifndef MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK
+#define MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK 4
+#endif
+	extern int memorystatus_control(uint32_t command, int32_t pid, uint32_t flags, void *buffer, size_t buffersize);
+	memorystatus_control(MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK, getpid(), 1024, NULL, 0);
+	say("hakios: set SpringBoard Jetsam memory limit to 1024 MB\n");
 	caenv();
 	display_link_rates();
 	accessibility_settings();
@@ -2160,6 +2240,7 @@ hakios_springboard_init(void)
 	    0x1f1c91480UL, (IMP)snapshot_output_format);
 	plain_vibrancy();
 	ui_lite();
+	neutralize_sleep_spin();
 	wallpaper_cache();
 	status_bar_fallback_is_split();
 	wallpaper_freeze();

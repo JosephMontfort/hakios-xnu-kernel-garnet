@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "hakios-metal/a6xx.hpp"
+#include "hakios-metal/a7xx.hpp"
 #include "hakios-metal/command.hpp"
 #include "hakios-metal/texture.hpp"
 
@@ -517,7 +518,7 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
     }
     if (o.invalidate) {
         // what the CPU or a blit wrote last is what the kernel reads
-        event(stream, CACHE_INVALIDATE);
+        event(stream, (o.generation == ChipGeneration::kA7xx) ? vgt_event_type(a7xx::A7XX_CACHE_INVALIDATE7) : CACHE_INVALIDATE);
     }
     if (o.marker) {
         uint32_t w = setMarker0(RM6_COMPUTE);
@@ -559,7 +560,8 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
             waitForWord(stream, ts, 1);
         }
         if (o.tailCacheFlush) {
-            eventTimestamp(stream, CACHE_FLUSH_TS, ts + 4, 2, o.tailTimestampBit);
+            vgt_event_type flushEvt = (o.generation == ChipGeneration::kA7xx) ? vgt_event_type(a7xx::A7XX_CACHE_FLUSH7) : CACHE_FLUSH_TS;
+            eventTimestamp(stream, flushEvt, ts + 4, 2, o.tailTimestampBit);
             waitForWordAtLeast(stream, ts + 4, 2);
         }
     }
@@ -605,9 +607,13 @@ bool CommandBuffer::dispatchIndirect(const Kernel& k, const Buffer& args, uint64
 }
 
 bool CommandBuffer::dispatchAny(const Kernel& k, const uint32_t* groups, const Buffer* args, uint64_t offset, const uint32_t* local,
-                                const Bindings& bindings, const uint32_t* immediates, const compute::Options& options) {
+                                const Bindings& bindings, const uint32_t* immediates, const compute::Options& optionsIn) {
     if (status_ > kEnqueued) {
         return fail("dispatch after commit");
+    }
+    compute::Options options = optionsIn;
+    if (options.generation == ChipGeneration::kA6xx && queue_.gpu().generation() == ChipGeneration::kA7xx) {
+        options.generation = ChipGeneration::kA7xx;
     }
     if (!freshen(bindings)) return false;
     std::string why;

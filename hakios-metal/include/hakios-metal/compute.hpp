@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "hakios-metal/chip.hpp"
 #include "hakios-metal/kernel.hpp"
 #include "hakios-metal/pm4.hpp"
 
@@ -104,6 +105,7 @@ static_assert(kTableIbosAt + kMaxIbos * 64 <= kTableTexConstAt && kTableTexConst
 // is for finding, on the phone, which part a hang needs (hakios-metal-probe --bisect runs end_only under each), since
 // the fake GPU cannot tell: on 28 October every dispatch, end_only included, left the HLSQ busy and the SP idle.
 struct Options {
+    ChipGeneration generation = ChipGeneration::kA6xx;
     bool prelude = true;        // SP_MODE_CONTROL, SP_PERFCTR_ENABLE, SP_FLOAT_CNTL, as computerator opens with
     bool invalidateCmd = true;  // HLSQ_INVALIDATE_CMD before the program
     bool hlsqCopies = true;     // the gen4 (has_lpac) copies: HLSQ_CS_CTRL_REG1, SP_CS_CNTL_0/1

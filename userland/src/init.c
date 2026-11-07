@@ -195,10 +195,15 @@ flash_root(const char *dev)
 	check(synthetic_dir("/flash/redwood"), "a synthetic /redwood on it, for this image");
 	check(bind_dir(in_image("/LaunchDaemons"), "/flash/System/Library/LaunchDaemons") &&
 	    bind_dir(in_image("/empty"), "/flash/System/Library/NanoLaunchDaemons") &&
-	    bind_dir(in_image("/empty"), "/flash/System/Library/LaunchAngels") &&
+	    bind_dir(in_image(stat(in_image("/LaunchAngels"), &fw_st) == 0 ? "/LaunchAngels" : "/empty"),
+	        "/flash/System/Library/LaunchAngels") &&
 	    bind_dir(in_image("/xpc"), "/flash/System/Library/xpc"), "our launchd jobs, not Darwin's");
 	check(bind_dir(in_image("/hal"), "/flash/System/Library/Audio/Plug-Ins/HAL"),
 	    "our audio device, not Apple's plug-ins");
+	if (stat(in_image("/Wallpaper/iOS_16~iphone.wallpaperCollection"), &fw_st) == 0) {
+		bind_dir(in_image("/Wallpaper/iOS_16~iphone.wallpaperCollection"),
+		    "/flash/Library/Wallpaper/Collections/iOS_16~iphone.wallpaperCollection");
+	}
 	if (stat("/fw", &fw_st) == 0) {
 		/* the audio DSP's firmware and the speakers' configuration, from the RAM image as in a RAM boot */
 		check(synthetic_dir("/flash/fw") && bind_dir("/fw", "/flash/fw"), "the firmware on /fw (adsp=1, sound=N)");
@@ -1561,6 +1566,16 @@ main(int argc, char **argv, char **envp)
 	chmod("/dev/console", 0666);
 	configure_inject();
 	configure_vnodes();
+	{
+		struct stat la_st;
+		if (stat(in_image("/LaunchAngels"), &la_st) == 0) {
+			bind_dir(in_image("/LaunchAngels"), "/System/Library/LaunchAngels");
+		}
+		if (stat(in_image("/Wallpaper/iOS_16~iphone.wallpaperCollection"), &la_st) == 0) {
+			bind_dir(in_image("/Wallpaper/iOS_16~iphone.wallpaperCollection"),
+			    "/Library/Wallpaper/Collections/iOS_16~iphone.wallpaperCollection");
+		}
+	}
 	run_rc(in_image("/etc/rc"));
 	printf("\n=== init: done ===\n");
 	reboot(RB_HALT);

@@ -14,6 +14,7 @@
 #include <tuple>
 
 #include "hakios-metal/a6xx.hpp"
+#include "hakios-metal/a7xx.hpp"
 #include "hakios-metal/command.hpp"
 #include "hakios-metal/texture.hpp"
 
@@ -1151,10 +1152,23 @@ void passStart(pm4::Stream& stream, uint32_t W, uint32_t H, uint64_t table, cons
         command1(stream, CP_SET_MODE, 0);
         event(stream, PC_CCU_INVALIDATE_COLOR);
         event(stream, PC_CCU_INVALIDATE_DEPTH);
-        event(stream, CACHE_INVALIDATE);
+        event(stream, (o.generation == ChipGeneration::kA7xx) ? vgt_event_type(a7xx::A7XX_CACHE_INVALIDATE7) : CACHE_INVALIDATE);
         reg(stream, REG_A6XX_HLSQ_INVALIDATE_CMD, hlsqInvalidateCmdAll());
         stream.waitForIdle();
-        for (const RegWrite& w : kStaticState) reg(stream, w.reg, w.value);
+        for (const RegWrite& w : kStaticState) {
+            if (o.generation == ChipGeneration::kA7xx) {
+                if (w.reg == REG_A6XX_RB_DBG_ECO_CNTL ||
+                    w.reg == REG_A6XX_SP_DBG_ECO_CNTL ||
+                    w.reg == REG_A6XX_TPL1_DBG_ECO_CNTL) {
+                    continue;  // Handled by kA710MagicRegs below
+                }
+            }
+            reg(stream, w.reg, w.value);
+        }
+        if (o.generation == ChipGeneration::kA7xx) {
+            for (const auto& w : a7xx::kA710MagicRegs) reg(stream, w.reg, w.value);
+            for (const auto& w : a7xx::kA710RawMagicRegs) reg(stream, w.reg, w.value);
+        }
         {
             uint32_t w[3] = {setDrawState0(0, CP_SET_DRAW_STATE__0_DISABLE_ALL_GROUPS, 0), 0, 0};
             stream.packet(CP_SET_DRAW_STATE, w, 3);
@@ -1190,7 +1204,7 @@ void passStart(pm4::Stream& stream, uint32_t W, uint32_t H, uint64_t table, cons
         regs(stream, REG_A6XX_GRAS_2D_RESOLVE_CNTL_1, {regXY(0, 0), regXY(W - 1, H - 1)});
         reg(stream, REG_A6XX_RB_WINDOW_OFFSET, regXY(0, 0));
         reg(stream, REG_A6XX_RB_WINDOW_OFFSET2, regXY(0, 0));
-        reg(stream, REG_A6XX_SP_WINDOW_OFFSET, regXY(0, 0));
+        reg(stream, (o.generation == ChipGeneration::kA7xx) ? a7xx::REG_A7XX_SP_WINDOW_OFFSET : REG_A6XX_SP_WINDOW_OFFSET, regXY(0, 0));
         reg(stream, REG_A6XX_SP_TP_WINDOW_OFFSET, regXY(0, 0));
         reg(stream, REG_A6XX_GRAS_BIN_CONTROL, binControlSysmem(o.binControlLrzFeedback));
         reg(stream, REG_A6XX_RB_BIN_CONTROL, binControlSysmem(o.binControlLrzFeedback));
@@ -1234,7 +1248,8 @@ void passTail(pm4::Stream& stream, uint64_t table, const Options& o, bool depth 
             waitForWord(stream, ts + 8, 3);
         }
         if (o.tailCacheFlush) {
-            eventTimestamp(stream, CACHE_FLUSH_TS, ts + 4, 2, o.tailTimestampBit);
+            vgt_event_type flushEvt = (o.generation == ChipGeneration::kA7xx) ? vgt_event_type(a7xx::A7XX_CACHE_FLUSH7) : CACHE_FLUSH_TS;
+            eventTimestamp(stream, flushEvt, ts + 4, 2, o.tailTimestampBit);
             waitForWordAtLeast(stream, ts + 4, 2);
         }
     }
@@ -2445,7 +2460,7 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
             regs(stream, REG_A6XX_GRAS_2D_RESOLVE_CNTL_1, {regXY(x1, y1), regXY(x2, y2)});
             reg(stream, REG_A6XX_RB_WINDOW_OFFSET, regXY(x1, y1));
             reg(stream, REG_A6XX_RB_WINDOW_OFFSET2, regXY(x1, y1));
-            reg(stream, REG_A6XX_SP_WINDOW_OFFSET, regXY(x1, y1));
+            reg(stream, (o.generation == ChipGeneration::kA7xx) ? a7xx::REG_A7XX_SP_WINDOW_OFFSET : REG_A6XX_SP_WINDOW_OFFSET, regXY(x1, y1));
             reg(stream, REG_A6XX_SP_TP_WINDOW_OFFSET, regXY(x1, y1));
             const bool streams = vsc != 0 && (o.gmemBinningStage == 0 || o.gmemBinningStage >= 3);
             if (streams) {
@@ -2762,9 +2777,13 @@ bool appendDeduped(pm4::Stream& to, const pm4::Stream& from, CommandBuffer::RegS
 }
 
 bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const Draw& d, const Bindings& vsBindings, const Bindings& fsBindings,
-                         const render::Options& options) {
+                         const render::Options& optionsIn) {
     if (status_ > kEnqueued) {
         return fail("draw after commit");
+    }
+    render::Options options = optionsIn;
+    if (options.generation == ChipGeneration::kA6xx && queue_.gpu().generation() == ChipGeneration::kA7xx) {
+        options.generation = ChipGeneration::kA7xx;
     }
     // A compressed texture whose rows this processor changed since the GPU last copied them in (Texture::staging): the
     // copy first, by the 2D engine into the UBWC layout, in a pass of its own before this draw's

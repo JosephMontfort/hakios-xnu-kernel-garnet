@@ -37,6 +37,7 @@
 #include <string>
 #include <vector>
 
+#include "hakios-metal/chip.hpp"
 #include "hakios-metal/compute.hpp"
 #include "hakios-metal/kernel.hpp"
 #include "hakios-metal/pm4.hpp"
@@ -421,6 +422,7 @@ static_assert(kTableBorderColorAt % 128 == 0 && kTableBorderColorAt + 3 * 128 <=
 // whole stream as turnip's sysmem pass and r3d path have it; the *Alt fields pick the other witness's value where the
 // two disagree, so one boot of --bisect can tell which the hardware wants.
 struct Options {
+    ChipGeneration generation = ChipGeneration::kA6xx;
     bool batchStart = true;      // CP_SET_MODE 0, PC_CCU_INVALIDATE_COLOR/DEPTH + CACHE_INVALIDATE (fd6's three), HLSQ_INVALIDATE_CMD all,
                                  // WFI, kStaticState, CP_SET_DRAW_STATE disable-all, kStaticStateAfterDrawState, the 32 VFD_FETCH sizes,
                                  // the border colour bases, kStaticStateTail, WFI (fd6_emit_restore / tu6_init_hw)
