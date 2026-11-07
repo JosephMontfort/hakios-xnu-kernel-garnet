@@ -1,5 +1,6 @@
 adreno	k
 adreno_blind	k
+adreno_bw	k
 adreno_dirty	k
 adreno_fine	k
 adreno_keep	k
@@ -87,6 +88,7 @@ cpus	l
 ddr	k
 ddr_rest	k
 ddr_vote	k
+detlog	k
 display_probe	k
 epoch	k
 fb_beam	k
@@ -106,6 +108,8 @@ fbsubtype	k
 fbtrace	k
 fbwidth	ku
 gamut	l
+garnet_gpu	k
+garnet_touch	k
 gl	u
 glblit	u
 glcensus	u
@@ -147,6 +151,8 @@ gpu_cached	k
 gpu_exact	k
 gpu_keep	k
 gpu_log	k
+gpu_recover	k
+gpu_va	k
 hakios_kver	k
 haptic	k
 haptic_effect	k
@@ -283,6 +289,7 @@ touch_lat	ku
 touch_poll_us	k
 touch_rate	k
 touch_spi_hz	k
+touch_swap	k
 touchscreen	k
 tu_debug	u
 ufs	l

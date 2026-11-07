@@ -1,15 +1,16 @@
-ADRENO	arg	adreno	GPU and display	k	hakios.adreno.c	
-ADRENO_BLIND	arg	adreno_blind	GPU and display	k	hakios.adreno.c	
-ADRENO_DIRTY	arg	adreno_dirty	GPU and display	k	hakios.adreno.c	
-ADRENO_FINE	arg	adreno_fine	GPU and display	k	hakios.adreno.c	the newest step waits like that before every single access
-ADRENO_KEEP	arg	adreno_keep	GPU and display	k	hakios.adreno.c	
-ADRENO_ONLY	arg	adreno_only	GPU and display	k	hakios.adreno.c	step K alone (what steps 6 to 10 need, they check for themselves: within one session of the loader, power and clocks stay as an earlier run left them)
-ADRENO_PAUSE	arg	adreno_pause	GPU and display	k	hakios.adreno.c	how long the newest step waits after announcing a group of accesses (default 2200)
-ADRENO_RETURN	arg	adreno_return	GPU and display	k	hakios.adreno.c	when all is over, go back to the loader instead of starting the system
-ADRENO_SKIP	arg	adreno_skip	GPU and display	k	hakios.adreno.c	leave out the steps whose bits are set (bit 2 = step 2)
-ADRENO_SPEED	arg	adreno_speed	GPU and display	k	hakios.adreno.c	step 17 asks the GMU for the 3D core's Nth speed: 1 315 MHz, 2 450 MHz, 3 550 MHz (the default: the most this phone's GPU is rated for)
-ADRENO_STREAM1	arg	adreno_stream1	GPU and display	k	hakios.adreno.c	step 18 leaves the core's second stream out (0) or gives it an empty context of its own (2): what the SMMU then records shows what the core
-ADRENO_WATCH	arg	adreno_watch	GPU and display	k	hakios.adreno.c	after the last step, say once a second for S seconds (default 20) that the machine is still alive, and what was written last
+ADRENO	arg	adreno	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	
+ADRENO_BLIND	arg	adreno_blind	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	
+ADRENO_BW	arg	adreno_bw	User space	k	hakios.adreno710.c	
+ADRENO_DIRTY	arg	adreno_dirty	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	
+ADRENO_FINE	arg	adreno_fine	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	the newest step waits like that before every single access
+ADRENO_KEEP	arg	adreno_keep	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	
+ADRENO_ONLY	arg	adreno_only	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	step K alone (what steps 6 to 10 need, they check for themselves: within one session of the loader, power and clocks stay as an earlier run left them)
+ADRENO_PAUSE	arg	adreno_pause	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	how long the newest step waits after announcing a group of accesses (default 2200)
+ADRENO_RETURN	arg	adreno_return	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	when all is over, go back to the loader instead of starting the system
+ADRENO_SKIP	arg	adreno_skip	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	leave out the steps whose bits are set (bit 2 = step 2)
+ADRENO_SPEED	arg	adreno_speed	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	step 17 asks the GMU for the 3D core's Nth speed: 1 315 MHz, 2 450 MHz, 3 550 MHz (the default: the most this phone's GPU is rated for)
+ADRENO_STREAM1	arg	adreno_stream1	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	step 18 leaves the core's second stream out (0) or gives it an empty context of its own (2): what the SMMU then records shows what the core
+ADRENO_WATCH	arg	adreno_watch	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	after the last step, say once a second for S seconds (default 20) that the machine is still alive, and what was written last
 ADSP_AGAIN	arg	adsp_again	Audio and battery	k	hakios.adsp.c	
 ADSP_APR_WAIT	arg	adsp_apr_wait	Audio and battery	k	hakios.adsp.c	
 ADSP_KEEP	arg	adsp_keep	Audio and battery	k	hakios.adsp.c	
@@ -79,7 +80,8 @@ CPUMASK	arg	cpumask	Loader	l	loader.c
 DDR	arg	ddr	CPU, memory and boot	k	hakios.cpufreq.c	the memory's bus clock managers ("BCM") in the command database the boot loader left, with what is needed to vote for bandwidth on them -- only read
 DDR_REST	arg	ddr_rest	CPU, memory and boot	k	hakios.cpufreq.c	
 DDR_VOTE	arg	ddr_vote	CPU, memory and boot	k	hakios.cpufreq.c	
-DISPLAY_PROBE	arg	display_probe	GPU and display	k	hakios.adreno.c	before any step: read what the firmware left the display controller doing (display_probe() below; two clocks are turned on, nothing else written)
+DETLOG	arg	detlog	User space	k	hakios.adreno710.c	
+DISPLAY_PROBE	arg	display_probe	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	before any step: read what the firmware left the display controller doing (display_probe() below; two clocks are turned on, nothing else written)
 FB_BEAM	arg	fb_beam	GPU and display	k	MiniIOMobileFramebuffer.cpp	frames written to the panel's memory whenever their beat comes, as before
 FB_BEAT	arg	fb_beat	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 FB_CA_HZ	arg	fb_ca_hz	GPU and display	k	MiniIOMobileFramebuffer.cpp	the refresh rate told to CoreAnimation (IOMFBDisplayRefresh) when it is not to be fb_hz's
@@ -97,6 +99,8 @@ FBSUBTYPE	arg	fbsubtype	GPU and display	k	MiniIOMobileFramebuffer.cpp
 FBTRACE	arg	fbtrace	GPU and display	k	MiniIOMobileFramebuffer.cpp	log the first N calls of every selector (default 3)
 FBWIDTH	arg	fbwidth	GPU and display	ku	MiniIOMobileFramebuffer.cpp,inject_sb.c	
 GAMUT	arg	gamut	Loader	l	loader.c	
+GARNET_GPU	arg	garnet_gpu	User space	k	hakios.adreno710.c	
+GARNET_TOUCH	arg	garnet_touch	User space	k	hakios.focaltech.c	
 GL	arg	gl	User space	u	inject.c,inject_sb.c	not even with a GPU; gl=1: also without one, by Mesa's software driver (slow; for working on eagl.c in QEMU)
 GLBLIT	arg	glblit	GPU and display	u	eagl.c	the surface's memory, as before
 GLCENSUS	arg	glcensus	GPU and display	u	eagl.c	
@@ -134,9 +138,11 @@ GLTRACE_UNIFORMS	arg	gltrace_uniforms	GPU and display	u	eagl.c	what the program 
 GLWAIT	arg	glwait	GPU and display	u	eagl.c	
 GLYES	arg	glyes	User space	u	inject.c	the renderer is made to answer that it has those functions after all
 GPU_CACHED	arg	gpu_cached	GPU and display	k	hakios.gpu.cpp	
-GPU_EXACT	arg	gpu_exact	GPU and display	k	hakios.adreno.c	
+GPU_EXACT	arg	gpu_exact	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	
 GPU_KEEP	arg	gpu_keep	GPU and display	k	hakios.gpu.cpp	
-GPU_LOG	arg	gpu_log	GPU and display	k	hakios.adreno.c	
+GPU_LOG	arg	gpu_log	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	
+GPU_RECOVER	arg	gpu_recover	User space	k	hakios.adreno710.c	a submission the core never finishes does not cost the rest of the run
+GPU_VA	arg	gpu_va	User space	k	hakios.adreno710.c	
 HAPTIC_EFFECT	arg	haptic_effect	Haptics and torch	k	hakios.haptic.c	
 M2V_UTRACE	arg	m2v_utrace	User space	u	HakiosMetalCA.m	Turnip's GPU trace of every render pass (u_trace) into a file, printed during the run
 MACHINE_NAME	arg	machine_name	CPU, memory and boot	k	GenericARMPE.cpp	
@@ -251,11 +257,12 @@ THERMAL_TM1	arg	thermal_tm1	Chip, thermal and PMIC	k	hakios.thermal.c
 TORCH	arg	torch	Haptics and torch	kl	hakios.torch.c,loader.c	a look, reading only: the arbiter's channel for the module and who may write through it, the module's type, its registers, the PMIC's temperature
 TORCH_MAX_S	arg	torch_max_s	Haptics and torch	k	hakios.torch.c	
 TORCH_SECS	arg	torch_secs	Haptics and torch	k	hakios.torch.c	
-TOUCH_FLIP	arg	touch_flip	Touch and buttons	k	hakios.goodix.c	
+TOUCH_FLIP	arg	touch_flip	Touch and buttons	k	hakios.focaltech.c,hakios.goodix.c	
 TOUCH_LAT	arg	touch_lat	GPU and display	ku	HakiosMetalCA.m,MiniIOMobileFramebuffer.cpp,eagl.c,hakios.goodix.c,hakios.gpu.cpp,hakios.input.c,inject.c,inject_sb.c	a line for every wait of a program's for the GPU that took a millisecond or more ("tl: f KIND US at US"), for telling apart what holds a frame up
-TOUCH_POLL_US	arg	touch_poll_us	Touch and buttons	k	hakios.goodix.c	
-TOUCH_RATE	arg	touch_rate	Touch and buttons	k	hakios.goodix.c	the chip reports twice as often (Xiaomi's game mode; 240 otherwise)
+TOUCH_POLL_US	arg	touch_poll_us	Touch and buttons	k	hakios.focaltech.c,hakios.goodix.c	
+TOUCH_RATE	arg	touch_rate	Touch and buttons	k	hakios.focaltech.c,hakios.goodix.c	the chip reports twice as often (Xiaomi's game mode; 240 otherwise)
 TOUCH_SPI_HZ	arg	touch_spi_hz	Touch and buttons	k	hakios.goodix.c	the bus at N Hz (Android's device tree gives the chip 5 MHz)
+TOUCH_SWAP	arg	touch_swap	User space	k	hakios.focaltech.c	
 TU_DEBUG	arg	tu_debug	User space	u	HakiosMetalCA.m	Turnip's TU_DEBUG in the window server (sysmem, gmem, forcebin, ...)
 UFS_BENCH	arg	ufs_bench	Storage and APFS	k	hakios.ufs.c	what one request through the loader costs, by size
 UFS_CHECK	arg	ufs_check	Storage and APFS	k	hakios.ufs.c	

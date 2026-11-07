@@ -14,6 +14,11 @@ driver GOODIX
 	help    the touch screen: a Goodix GT9916 ("Berlin-D") or a FocalTech FT3680 on SPI (touchscreen=1). The bus,
 	help    pins and supplies are the POCO X5 Pro's; another phone with one of these controllers changes those
 
+driver FOCALTECH
+	file    bsd/dev/hakios.focaltech.c
+	help    the touch screen for POCO X6 5G (Garnet): FocalTech FT3683G on SPI (touchscreen=1). The bus, pins
+	help    and supplies are the POCO X6's (SM7435 / QUP1 SE3)
+
 driver BUTTONS
 	file    bsd/dev/hakios.buttons.c
 	help    the power and volume keys, read from the PMIC through the SPMI arbiter (buttons=1)

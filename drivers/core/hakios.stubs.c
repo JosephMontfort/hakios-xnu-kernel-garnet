@@ -41,6 +41,10 @@ void hakios_virtio_input_init(void) {}
 void hakios_goodix_init(void) {}
 #endif
 
+#ifndef HAKIOS_FOCALTECH
+void hakios_focaltech_init(void) {}
+#endif
+
 #ifndef HAKIOS_BUTTONS
 void hakios_buttons_init(void) {}
 #endif
@@ -69,11 +73,23 @@ void hakios_cpufreq_init(void) {}
 void hakios_ddr_quiesce(void) {}
 #endif
 
-#ifndef HAKIOS_ADRENO
+#if !defined(HAKIOS_ADRENO) && !defined(HAKIOS_ADRENO710)
 void hakios_adreno_init(void) {}
 void hakios_adreno_quiesce(void) {}
 void hakios_adreno_stop(void) {}
 void hakios_adreno_minute(void) {}
+bool hakios_gpu_ready(void) { return false; }
+bool hakios_gpu_parameter(uint32_t which, uint64_t *value) { return false; }
+uint64_t hakios_gpu_address(uint64_t size) { return 0; }
+void hakios_gpu_address_free(uint64_t address, uint64_t size) {}
+bool hakios_gpu_map(uint64_t address, uint64_t phys, bool read_only) { return false; }
+void hakios_gpu_mapped(void) {}
+void hakios_gpu_unmap(uint64_t address, uint64_t size) {}
+void hakios_gpu_to_memory(void *start, uint64_t size) {}
+uint32_t hakios_gpu_submit(const uint64_t *addresses, const uint32_t *words, uint32_t count) { return 0; }
+bool hakios_gpu_done(uint32_t fence) { return true; }
+void hakios_gpu_stop(void) {}
+uint32_t gpu_log = 0;
 #endif
 
 #ifndef HAKIOS_WIFI

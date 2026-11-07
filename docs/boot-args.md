@@ -2,7 +2,7 @@
 
 Made by `tools/boot-args.py --markdown`; CI fails if it is out of date with the source (`tools/boot-args.py --check`).
 
-Every argument that the kernel, the loader or user space of this port reads, and which file reads it. **350 arguments**: 279 read by the kernel, 14 by the loader, 68 by user space (one is read in more than one place).
+Every argument that the kernel, the loader or user space of this port reads, and which file reads it. **357 arguments**: 286 read by the kernel, 14 by the loader, 68 by user space (one is read in more than one place).
 
 This is a catalogue of what exists and who reads it, not a manual. What an argument means is in the head of the file that reads it. The stable switches have a symbol in the configuration (`tools/hakios-config.py help SYMBOL`, `docs/configs.md`); the rest are the knobs of bring-up (a driver's steps, pauses, traces, test modes) and can change with the driver. Any of them can be given in a configuration with `CONFIG_BOOTARGS="name=value ..."`, which checks that each name is in this list. What the arguments of the two Metal paths do: [Metal on the Adreno](reference/metal.md#boot-arguments).
 
@@ -12,19 +12,19 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 
 | Argument | Layer | Read by | Configuration | Set by |
 |---|---|---|---|---|
-| `adreno` | K | `hakios.adreno.c` | `CONFIG_ADRENO` |  |
-| `adreno_blind` | K | `hakios.adreno.c` | `CONFIG_ADRENO_BLIND` |  |
-| `adreno_dirty` | K | `hakios.adreno.c` | `CONFIG_ADRENO_DIRTY` |  |
-| `adreno_fine` | K | `hakios.adreno.c` | `CONFIG_ADRENO_FINE` |  |
-| `adreno_keep` | K | `hakios.adreno.c` | `CONFIG_ADRENO_KEEP` |  |
-| `adreno_only` | K | `hakios.adreno.c` | `CONFIG_ADRENO_ONLY` |  |
-| `adreno_pause` | K | `hakios.adreno.c` | `CONFIG_ADRENO_PAUSE` |  |
-| `adreno_return` | K | `hakios.adreno.c` | `CONFIG_ADRENO_RETURN` |  |
-| `adreno_skip` | K | `hakios.adreno.c` | `CONFIG_ADRENO_SKIP` |  |
-| `adreno_speed` | K | `hakios.adreno.c` | `CONFIG_ADRENO_SPEED` |  |
-| `adreno_stream1` | K | `hakios.adreno.c` | `CONFIG_ADRENO_STREAM1` |  |
-| `adreno_watch` | K | `hakios.adreno.c` | `CONFIG_ADRENO_WATCH` |  |
-| `display_probe` | K | `hakios.adreno.c` | `CONFIG_DISPLAY_PROBE` |  |
+| `adreno` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_ADRENO` |  |
+| `adreno_blind` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_ADRENO_BLIND` |  |
+| `adreno_dirty` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_ADRENO_DIRTY` |  |
+| `adreno_fine` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_ADRENO_FINE` |  |
+| `adreno_keep` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_ADRENO_KEEP` |  |
+| `adreno_only` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_ADRENO_ONLY` |  |
+| `adreno_pause` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_ADRENO_PAUSE` |  |
+| `adreno_return` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_ADRENO_RETURN` |  |
+| `adreno_skip` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_ADRENO_SKIP` |  |
+| `adreno_speed` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_ADRENO_SPEED` |  |
+| `adreno_stream1` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_ADRENO_STREAM1` |  |
+| `adreno_watch` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_ADRENO_WATCH` |  |
+| `display_probe` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_DISPLAY_PROBE` |  |
 | `fb_beam` | K | `MiniIOMobileFramebuffer.cpp` | `CONFIG_FB_BEAM` |  |
 | `fb_beat` | K | `MiniIOMobileFramebuffer.cpp` | `CONFIG_FB_BEAT` |  |
 | `fb_ca_hz` | K | `MiniIOMobileFramebuffer.cpp` | `CONFIG_FB_CA_HZ` |  |
@@ -72,11 +72,11 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `gltrace_shaders` | U | `eagl.c` | `CONFIG_GLTRACE_SHADERS` |  |
 | `gltrace_uniforms` | U | `eagl.c` | `CONFIG_GLTRACE_UNIFORMS` |  |
 | `glwait` | U | `eagl.c` | `CONFIG_GLWAIT` |  |
-| `gpu` | K | `hakios.adreno.c` | `CONFIG_GPU` |  |
+| `gpu` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_GPU` |  |
 | `gpu_cached` | K | `hakios.gpu.cpp` | `CONFIG_GPU_CACHED` |  |
-| `gpu_exact` | K | `hakios.adreno.c` | `CONFIG_GPU_EXACT` |  |
+| `gpu_exact` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_GPU_EXACT` |  |
 | `gpu_keep` | K | `hakios.gpu.cpp` | `CONFIG_GPU_KEEP` |  |
-| `gpu_log` | K | `hakios.adreno.c` | `CONFIG_GPU_LOG` |  |
+| `gpu_log` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_GPU_LOG` |  |
 | `hakios_kver` | K | `MiniIOMobileFramebuffer.cpp`, `hakios.version.c` |  | the loader (from the payload's kernel.ver) |
 | `metal` | KU | `HakiosMetal.m`, `MiniIOMobileFramebuffer.cpp`, `inject_sb.c` | `CONFIG_METAL` |  |
 | `rec_mb` | K | `MiniIOMobileFramebuffer.cpp` | `CONFIG_REC_MB` |  |
@@ -255,11 +255,11 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `buttons_steps` | K | `hakios.buttons.c` | `CONFIG_BUTTONS_STEPS` |  |
 | `press_power` | K | `hakios.buttons.c` | `CONFIG_PRESS_POWER` |  |
 | `press_power_ms` | K | `hakios.buttons.c` | `CONFIG_PRESS_POWER_MS` |  |
-| `touch_flip` | K | `hakios.goodix.c` | `CONFIG_TOUCH_FLIP` |  |
-| `touch_poll_us` | K | `hakios.goodix.c` | `CONFIG_TOUCH_POLL_US` |  |
-| `touch_rate` | K | `hakios.goodix.c` | `CONFIG_TOUCH_RATE` |  |
+| `touch_flip` | K | `hakios.focaltech.c`, `hakios.goodix.c` | `CONFIG_TOUCH_FLIP` |  |
+| `touch_poll_us` | K | `hakios.focaltech.c`, `hakios.goodix.c` | `CONFIG_TOUCH_POLL_US` |  |
+| `touch_rate` | K | `hakios.focaltech.c`, `hakios.goodix.c` | `CONFIG_TOUCH_RATE` |  |
 | `touch_spi_hz` | K | `hakios.goodix.c` | `CONFIG_TOUCH_SPI_HZ` |  |
-| `touchscreen` | K | `hakios.buttons.c`, `hakios.goodix.c` | `CONFIG_TOUCHSCREEN` |  |
+| `touchscreen` | K | `hakios.buttons.c`, `hakios.focaltech.c`, `hakios.goodix.c` | `CONFIG_TOUCHSCREEN` |  |
 | `virtio_input` | K | `hakios.virtio_input.c` | `CONFIG_VIRTIO_INPUT` |  |
 
 ## Storage and APFS (43)
@@ -393,10 +393,11 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `ufs` | L | `loader.c` | `CONFIG_UFS` |  |
 | `ufs_probe` | L | `loader.c` | `CONFIG_UFS_PROBE` |  |
 
-## User space (35)
+## User space (42)
 
 | Argument | Layer | Read by | Configuration | Set by |
 |---|---|---|---|---|
+| `adreno_bw` | K | `hakios.adreno710.c` | `CONFIG_ADRENO_BW` |  |
 | `autounlock` | U | `inject_sb.c` | `CONFIG_AUTOUNLOCK` |  |
 | `bt` | K | `hakios.bt.c` | `CONFIG_BT` |  |
 | `bt_again` | K | `hakios.bt.c` | `CONFIG_BT_AGAIN` |  |
@@ -405,11 +406,16 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `ca_vbl` | U | `inject.c` | `CONFIG_CA_VBL` |  |
 | `caenv` | U | `inject.c`, `inject_sb.c` | `CONFIG_CAENV` |  |
 | `cc_fade` | U | `inject_sb.c` | `CONFIG_CC_FADE` |  |
+| `detlog` | K | `hakios.adreno710.c` | `CONFIG_DETLOG` |  |
+| `garnet_gpu` | K | `hakios.adreno710.c` | `CONFIG_GARNET_GPU` |  |
+| `garnet_touch` | K | `hakios.focaltech.c` | `CONFIG_GARNET_TOUCH` |  |
 | `gl` | U | `inject.c`, `inject_sb.c` | `CONFIG_GL` |  |
 | `glcompile` | U | `inject.c` | `CONFIG_GLCOMPILE` |  |
 | `glno` | U | `inject.c` | `CONFIG_GLNO` |  |
 | `glsb3` | U | `inject.c` | `CONFIG_GLSB3` |  |
 | `glyes` | U | `inject.c` | `CONFIG_GLYES` |  |
+| `gpu_recover` | K | `hakios.adreno710.c` | `CONFIG_GPU_RECOVER` |  |
+| `gpu_va` | K | `hakios.adreno710.c` | `CONFIG_GPU_VA` |  |
 | `m2v_utrace` | U | `HakiosMetalCA.m` | `CONFIG_M2V_UTRACE` |  |
 | `metal_all` | U | `HakiosMetalCA.m` | `CONFIG_METAL_ALL` |  |
 | `metal_defer` | U | `HakiosMetalCA.m` | `CONFIG_METAL_DEFER` |  |
@@ -426,6 +432,7 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `root_apfs` | U | `init.c` | `CONFIG_ROOT_APFS` |  |
 | `sb_delay` | U | `inject_sb.c` |  | xl (XL_SB_DELAY) |
 | `switcher_wallpaper` | U | `inject_sb.c` | `CONFIG_SWITCHER_WALLPAPER` |  |
+| `touch_swap` | K | `hakios.focaltech.c` | `CONFIG_TOUCH_SWAP` |  |
 | `tu_debug` | U | `HakiosMetalCA.m` | `CONFIG_TU_DEBUG` |  |
 | `ui_lite` | U | `inject_sb.c` | `CONFIG_UI_LITE` |  |
 | `var_hfs` | U | `init.c` | `CONFIG_VAR_HFS` |  |

@@ -10,6 +10,8 @@
 
 input    bsd/dev/hakios.goodix.c
 input    bsd/dev/hakios.focaltech_fw.h
+input    bsd/dev/hakios.focaltech.c
+input    bsd/dev/hakios.focaltech_garnet_fw.h
 input    bsd/dev/hakios.input.c
 input    bsd/dev/hakios.buttons.c
 input    bsd/dev/hakios.virtio_input.c
@@ -23,6 +25,7 @@ storage  bsd/dev/hakios.apfs_check.c
 storage  bsd/dev/hakios.virtio_blk.c
 
 gpu      bsd/dev/hakios.adreno.c
+gpu      bsd/dev/hakios.adreno710.c
 gpu      iokit/Kernel/hakios.gpu.cpp
 
 camera   bsd/dev/hakios.camera.c
