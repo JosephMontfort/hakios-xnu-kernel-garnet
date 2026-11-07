@@ -1,0 +1,189 @@
+name: Build HakiOS Kernel & Loader (Garnet)
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Garnet XNU Kernel & Loader
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify Architecture & Configuration Integrity
+        run: |
+          echo "=== 1. Checking driver declarations and subsystems ==="
+          python3 tools/drivers-check.py
+
+          echo "=== 2. Checking boot arguments and documentation sync ==="
+          python3 tools/boot-args.py --check
+
+          echo "=== 3. Syncing Garnet device repository ==="
+          python3 tools/hakios-device.py sync garnet
+
+          echo "=== 4. Checking Garnet device repository integrity ==="
+          python3 tools/hakios-device.py check garnet
+
+          echo "=== 5. Applying Garnet defconfig ==="
+          python3 tools/hakios-config.py defconfig garnet
+
+          echo "=== 6. Validating .config symbols against drivers ==="
+          python3 tools/hakios-config.py check
+
+      - name: Install System Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            git \
+            curl \
+            clang \
+            lld \
+            llvm \
+            python3-pip \
+            python3-venv \
+            meson \
+            ninja-build \
+            perl \
+            xz-utils \
+            flex \
+            bison \
+            m4 \
+            autoconf \
+            automake \
+            libtool \
+            liblz4-dev \
+            libssl-dev \
+            uuid-dev \
+            libtinfo6 \
+            zip
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
+
+      - name: Install Theos Toolchain & iOS SDK
+        run: |
+          mkdir -p "$HOME/theos/toolchain"
+          echo "Fetching iOS LLVM cross toolchain..."
+          curl -sL https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-x86_64.tar.xz | tar -xJf - -C "$HOME/theos/toolchain"
+          echo "Fetching Theos iOS SDKs..."
+          git clone --depth 1 https://github.com/theos/sdks.git "$HOME/theos/sdks"
+          test -x "$HOME/theos/toolchain/linux/iphone/bin/ld"
+          test -d "$HOME/theos/sdks/iPhoneOS16.5.sdk/usr/include"
+
+      - name: Compile Freestanding UEFI Loader
+        run: |
+          cd xnuloader
+          bash build.sh
+          cd ..
+          test -f xnuloader/loader.efi
+          ls -lh xnuloader/loader.efi
+
+      - name: Prepare XNU Source & Cross-Compilation Dependencies
+        run: |
+          bash xnu/apply.sh
+          bash xnu-deps/setup.sh
+
+      - name: Compile XNU Kernel (DEVELOPMENT_ARM64_BCM2837)
+        run: |
+          mkdir -p out
+          touch out/.kernel-start
+          ./xnu-build.sh -j$(nproc) -k > out/kernel-build.log 2>&1 || true
+          K="xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837"
+          if [ -f "$K" ] && [ "$K" -nt out/.kernel-start ]; then
+            echo "Kernel compilation succeeded!"
+            ls -lh "$K"
+          else
+            echo "::error::Kernel binary was not created!"
+            grep -C 5 -E "error:|fatal error:" out/kernel-build.log || true
+            tail -n 100 out/kernel-build.log
+            exit 1
+          fi
+
+      - name: Package Distributable Garnet Release
+        run: |
+          mkdir -p dist/payload
+          K="xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837"
+          
+          # Copy core boot binaries
+          cp "$K" dist/mach.development.bcm2837
+          cp "$K" dist/payload/mach.development.bcm2837
+          if [ -f "${K}.unstripped" ]; then
+            cp "${K}.unstripped" dist/mach.development.bcm2837.unstripped
+          fi
+          cp xnuloader/loader.efi dist/loader.efi
+          cp xnuloader/loader.efi dist/payload/loader.efi
+          
+          # Copy Garnet device tree, UEFI firmware, and boot runner from devices/garnet
+          if [ -d devices/garnet/prebuilt ]; then
+            cp devices/garnet/prebuilt/device-tree.dtb dist/payload/ || true
+            cp devices/garnet/prebuilt/SILICIUM_UEFI.fd dist/payload/ || true
+            cp devices/garnet/prebuilt/bootshim.bin dist/payload/ || true
+          fi
+          if [ -f devices/garnet/garnet-boot.sh ]; then
+            cp devices/garnet/garnet-boot.sh dist/payload/
+            chmod +x dist/payload/garnet-boot.sh
+          fi
+
+          # Create user-friendly README for fastboot execution
+          cat << 'EOF' > dist/payload/README.txt
+HakiOS for POCO X6 5G (garnet / SM7435-AB)
+===========================================
+
+Included in this release:
+- loader.efi: HakiOS UEFI Bootloader (Freestanding ARM64, 5GB K60 Notch memory map)
+- mach.development.bcm2837: XNU Kernel with Garnet drivers (FocalTech FT3683G, Adreno 710 GPU)
+- device-tree.dtb & SILICIUM_UEFI.fd: Qualcomm SM7435 hardware definitions and UEFI FD
+- garnet-boot.sh: Automated boot helper via fastboot
+
+Quick Boot Instructions:
+1. Boot your POCO X6 into fastboot mode (Hold Volume Down + Power).
+2. Connect device via USB to your host computer.
+3. Run the automated boot helper:
+     chmod +x garnet-boot.sh
+     ./garnet-boot.sh
+EOF
+
+          # Package zip archive
+          ARCHIVE_NAME="hakios-garnet-${GITHUB_REF_NAME:-$GITHUB_SHA}.zip"
+          # Sanitize slashes in branch names if applicable
+          ARCHIVE_NAME=$(echo "$ARCHIVE_NAME" | tr '/' '-')
+          cd dist/payload
+          zip -r "../../dist/$ARCHIVE_NAME" *
+          cd ../..
+          echo "ARCHIVE_NAME=$ARCHIVE_NAME" >> $GITHUB_ENV
+          ls -la dist/
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hakios-garnet-build
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/${{ env.ARCHIVE_NAME }}
+            dist/mach.development.bcm2837
+            dist/loader.efi
+          draft: false
+          prerelease: false
+          generate_release_notes: true
