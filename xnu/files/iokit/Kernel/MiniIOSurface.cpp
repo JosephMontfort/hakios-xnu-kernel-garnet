@@ -154,6 +154,17 @@ static TUNABLE(uint32_t, gSurfaceClear, "surf_clear", 1);
 /* boot-arg surf_wrap=0: surfaces around the client's pictures refused, as before methodWrapClientImage (for comparing) */
 static TUNABLE(uint32_t, gSurfaceWrap, "surf_wrap", 1);
 
+static inline void
+clean_surface_dcache(void *addr, size_t size)
+{
+	uintptr_t start = (uintptr_t)addr & ~((uintptr_t)63);
+	uintptr_t end = (uintptr_t)addr + size;
+	for (uintptr_t p = start; p < end; p += 64) {
+		__asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
+	}
+	__asm__ volatile("dsb ish" ::: "memory");
+}
+
 void
 MiniIOSurfaceClearKept(void)
 {
@@ -170,6 +181,7 @@ MiniIOSurfaceClearKept(void)
 		gSurfaceKept[i].busy = true;
 		IOLockUnlock(gSurfaceKeptLock);
 		bzero(memory->getBytesNoCopy(), memory->getCapacity());
+		clean_surface_dcache(memory->getBytesNoCopy(), memory->getCapacity());
 		IOLockLock(gSurfaceKeptLock);
 		gSurfaceKept[i].busy = false;
 		gSurfaceKept[i].clear = true;
@@ -207,6 +219,7 @@ surfaceMemory(vm_size_t bytes)
 		IOLockUnlock(gSurfaceKeptLock);
 		if (memory != NULL && !clear) {
 			bzero(memory->getBytesNoCopy(), gSurfaceClear ? bytes : PAGE_SIZE);
+			clean_surface_dcache(memory->getBytesNoCopy(), gSurfaceClear ? bytes : PAGE_SIZE);
 		}
 	}
 	if (memory == NULL) {

@@ -31,6 +31,7 @@ struct payload_entry { char name[16]; uint32_t size; uint32_t reserved; };
  * number of kernel runs (nothing writes to it: the root is read-only).
  */
 #define RESIDENT_RD_OFFSET  0x08000000ULL
+#define RESIDENT_RD_PADDR   0x8c8000000ULL
 #define RESIDENT_RD_RESERVE 0x30000000ULL         /* RAM that must remain for the kernel itself */
 #define PAGE_SIZE_MAX       0x4000ULL
 
@@ -85,7 +86,7 @@ static efi_system_table *ST;
 static efi_boot_services *BS;
 static efi_handle IMAGE;
 
-static char log_buf[32768];
+static char log_buf[16 * 1024 * 1024];
 static uint32_t log_len;
 
 void *
@@ -303,7 +304,7 @@ find_log_partition(void)
  * fetches over USB (fastboot get_staged).
  */
 /* aligned for any firmware's block I/O: U-Boot's wants a buffer aligned to the block size (media->io_align) */
-static char out_buf[2 * 1024 * 1024] __attribute__((aligned(0x2000)));
+static char out_buf[16 * 1024 * 1024] __attribute__((aligned(0x2000)));
 /* the storage's reads for the kernel land here (block_poll), and nothing else may be put in it */
 #define BLOCK_BUFFER_SIZE  (4u << 20)
 static uint8_t block_buffer[BLOCK_BUFFER_SIZE] __attribute__((aligned(0x2000)));
@@ -312,7 +313,7 @@ static uint8_t block_buffer[BLOCK_BUFFER_SIZE] __attribute__((aligned(0x2000)));
  * mailbox buffer, and a read-back landing in it while the kernel runs on the other core would
  * overwrite data the kernel is still copying out of it.
  */
-static uint8_t log_verify[sizeof(out_buf) + 8192] __attribute__((aligned(0x2000)));
+static uint8_t log_verify[4 * 1024 * 1024 + 8192] __attribute__((aligned(0x2000)));
 static const char *staged_data = out_buf;   /* what "upload" sends: normally the log in out_buf */
 static uint64_t staged_len;
 
@@ -585,6 +586,14 @@ static const struct platform platform_redwood = {
 	 * 2.5 times as fast. The kernel uses the small ones only when the big ones are all busy
 	 * (XNU's machine_routines.c, ml_choose_slow_core_partners()).
 	 */
+	.small_cores = 0x0f,
+};
+
+static const struct platform platform_garnet = {
+	/* io_base must be non-zero: XNU treats a zero SoC base as "no SoC" and skips clock setup. */
+	.name = "garnet", .io_base = 0x00400000, .io_size = 0x1B000000,
+	.gic_dist = 0x17200000, .gic_redist = 0x17260000, .uart = 0, .log_other_cpu = 1,
+	.cores = 8, .core_shift = 8,
 	.small_cores = 0x0f,
 };
 
@@ -2796,7 +2805,10 @@ choose_window(const struct payload_info *pi)
 		}
 	}
 	print("largest free block %x size %x\n", best_base, best_size);
-	if (pi->forced_base != 0) {
+	if (PLAT == &platform_garnet || PLAT == &platform_redwood) {
+		best_base = 0x840000000ULL;
+		best_size = 0x140000000ULL;
+	} else if (pi->forced_base != 0) {
 		best_base = pi->forced_base;
 		best_size = MAX_MEM_SIZE;
 	}
@@ -2942,10 +2954,10 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		print("resident image from the payload: %x bytes\n", (uint64_t)pi.resident_size);
 	}
 	if (resident_rd_size != 0) {
-		uint64_t res_pa = phys_base + RESIDENT_RD_OFFSET;
+		uint64_t res_pa = (PLAT == &platform_garnet || PLAT == &platform_redwood) ? RESIDENT_RD_PADDR : (phys_base + RESIDENT_RD_OFFSET);
 		uint64_t res_size = (resident_rd_size + PAGE_SIZE_MAX - 1) & ~(PAGE_SIZE_MAX - 1);
 
-		if (kern_hi + rd_size > res_pa) {
+		if (kern_hi + rd_size > res_pa && kern_lo < res_pa + res_size) {
 			print("kernel and ramdisk overlap the resident image\n");
 			return 0;
 		}
@@ -2958,8 +2970,12 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 			rd1_size = res_size;
 		}
 	}
-	/* everything up to topOfKernelData is the kernel's static region: it must cover both images */
-	uint64_t dt_pa = rd1_size != 0 ? rd1_pa + rd1_size : rd_pa + rd_size;
+	/*
+	 * On Redwood / Garnet, the resident root image sits at 0x8c8000000 and is excluded from
+	 * VM allocations via the notch table in vm_resident.c. Therefore, topOfKernelData does
+	 * not need to cover rd1; it sits immediately behind the kernel and its payload ramdisk.
+	 */
+	uint64_t dt_pa = (PLAT == &platform_garnet || PLAT == &platform_redwood) ? (rd_pa + rd_size) : (rd1_size != 0 ? rd1_pa + rd1_size : rd_pa + rd_size);
 	uint64_t dt_max = 0x10000;
 	uint64_t ba_pa = dt_pa + dt_max;
 	uint64_t top = ba_pa + PAGE_SIZE_MAX;
@@ -3169,6 +3185,19 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 		}
 		for (int shift = 60; shift >= 0 && n < BOOT_LINE_LENGTH - 1; shift -= 4) {
 			ba->commandLine[n++] = hex[(address >> shift) & 0xf];
+		}
+		if (n < BOOT_LINE_LENGTH - 1) ba->commandLine[n++] = ' ';
+	}
+	if ((PLAT == &platform_garnet || PLAT == &platform_redwood) && rd1_size != 0) {
+		static const char prefix[] = "garnet_root_end=0x";
+		static const char hex[] = "0123456789abcdef";
+		uint64_t end_addr = rd1_pa + rd1_size;
+
+		for (const char *c = prefix; *c && n < BOOT_LINE_LENGTH - 1; c++) {
+			ba->commandLine[n++] = *c;
+		}
+		for (int shift = 60; shift >= 0 && n < BOOT_LINE_LENGTH - 1; shift -= 4) {
+			ba->commandLine[n++] = hex[(end_addr >> shift) & 0xf];
 		}
 		if (n < BOOT_LINE_LENGTH - 1) ba->commandLine[n++] = ' ';
 	}
@@ -3703,6 +3732,7 @@ usb_start(void)
  * after it was taken for data, and only the power button brought the phone back.
  */
 static uint64_t usb_data_timeout;
+static int in_upload = 0;
 
 static int64_t
 usb_wait(uint8_t endpoint)
@@ -3722,7 +3752,7 @@ usb_wait(uint8_t endpoint)
 			return -1;
 		}
 		/* with a kernel running, a host that went away must not keep this core from watching it */
-		if (run_active && READ_SYSREG(CNTVCT_EL0) - began > 3 * freq) {
+		if (run_active && READ_SYSREG(CNTVCT_EL0) - began > (in_upload ? 60 : 3) * freq) {
 			return -1;
 		}
 		if (usb_data_timeout != 0 && READ_SYSREG(CNTVCT_EL0) - began > usb_data_timeout * freq) {
@@ -3866,12 +3896,12 @@ fb_command(char *cmd)
 
 			download_to_ramdisk = 0;
 			if (to_ramdisk) {
-				limit = win_size - RESIDENT_RD_OFFSET - RESIDENT_RD_RESERVE;
+				limit = (PLAT == &platform_garnet || PLAT == &platform_redwood) ? (0x980000000ULL - RESIDENT_RD_PADDR) : (win_size - RESIDENT_RD_OFFSET - RESIDENT_RD_RESERVE);
 				/* the answer to "download:" carries the size in 32 bits: a larger one would be answered as another size */
 				if (limit > 0xffffffffULL) {
 					limit = 0xffffffffULL;
 				}
-				dest = (uint8_t *)(win_base + RESIDENT_RD_OFFSET);
+				dest = (PLAT == &platform_garnet || PLAT == &platform_redwood) ? (uint8_t *)RESIDENT_RD_PADDR : (uint8_t *)(win_base + RESIDENT_RD_OFFSET);
 				resident_rd_size = 0;
 			}
 			if (total == 0 || total > limit) {
@@ -3922,6 +3952,7 @@ fb_command(char *cmd)
 			}
 		} else if (starts_with(cmd, "upload")) {
 			uint64_t sent = 0;
+			in_upload = 1;
 			fb_reply_data(staged_len);
 			while (sent < staged_len) {
 				uint64_t chunk = staged_len - sent > USB_CHUNK ? USB_CHUNK : staged_len - sent;
@@ -3930,7 +3961,12 @@ fb_command(char *cmd)
 				}
 				sent += chunk;
 			}
-			fb_reply("OKAY", "");
+			in_upload = 0;
+			if (sent == staged_len) {
+				fb_reply("OKAY", "");
+			} else {
+				fb_reply("FAIL", "short upload");
+			}
 		} else if (starts_with(cmd, "oem screenshot")) {
 			/* stage the raw framebuffer; "getvar screen" gives its geometry */
 			if (SCREEN.base == 0) {
@@ -4345,6 +4381,8 @@ efi_main(efi_handle image, efi_system_table *st)
 		SCREEN.stride = GOP->mode->info->pixels_per_scanline * 4;
 		if (SCREEN.base == 0xE1000000ULL) {
 			PLAT = &platform_redwood;
+		} else if (SCREEN.base == 0xB8000000ULL) {
+			PLAT = &platform_garnet;
 		} else {
 			ramfb_phone_screen();
 		}
