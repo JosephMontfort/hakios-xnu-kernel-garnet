@@ -34,6 +34,41 @@ Start with [Getting started](docs/getting-started/index.md), [On the phone](docs
 
 How they fit: [the repositories](docs/porting/repositories.md).
 
+## POCO X6 5G (Garnet) Quickstart
+
+Prebuilt release bundles (`garnet-boot.img`, `mach.development.bcm2837`, `loader.efi`, and scripts) are packaged under [Releases](https://github.com/JosephMontfort/hakios-xnu-kernel-garnet/releases).
+
+### Option 1: Android Host Device via Termux (USB OTG)
+```bash
+pkg update && pkg install -y android-tools python
+unzip hakios-garnet-*.zip && cd hakios-garnet-*
+chmod +x garnet-boot.sh
+fastboot boot garnet-boot.img
+./garnet-boot.sh
+```
+
+### Option 2: Linux PC
+```bash
+sudo apt update && sudo apt install -y fastboot python3
+unzip hakios-garnet-*.zip && cd hakios-garnet-*
+chmod +x garnet-boot.sh
+fastboot boot garnet-boot.img
+./garnet-boot.sh
+```
+
+### Option 3: Windows PC
+1. Extract `hakios-garnet-*.zip`.
+2. Put POCO X6 in Fastboot mode (Hold Volume Down + Power):
+   ```cmd
+   fastboot boot garnet-boot.img
+   ```
+3. Double-click `garnet-boot.bat` (or execute `.\garnet-boot.ps1`).
+
+### Garnet Community & Support
+- **Updates Channel:** [t.me/garnetglobal](https://t.me/garnetglobal)
+- **Support Group:** [t.me/Garnet_Axion_Support](https://t.me/Garnet_Axion_Support)
+- **Port Maintainer:** **Montfort**
+
 ## What you bring, and what is never here
 
 Nothing of Apple's and no vendor's firmware is in these repositories. The Darwin user space, if you want it, you lay out yourself from an

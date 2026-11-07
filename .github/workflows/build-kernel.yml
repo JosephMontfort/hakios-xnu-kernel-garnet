@@ -117,51 +117,89 @@ jobs:
 
       - name: Package Distributable Garnet Release
         run: |
-          mkdir -p dist/payload
+          mkdir -p dist/payload/userland dist/payload/prebuilt dist/payload/xnuloader dist/payload/tools
           K="xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837"
-          
-          # Copy core boot binaries
+
+          # Core boot binaries
           cp "$K" dist/mach.development.bcm2837
           cp "$K" dist/payload/mach.development.bcm2837
           if [ -f "${K}.unstripped" ]; then
             cp "${K}.unstripped" dist/mach.development.bcm2837.unstripped
           fi
           cp xnuloader/loader.efi dist/loader.efi
-          cp xnuloader/loader.efi dist/payload/loader.efi
-          
-          # Copy Garnet device tree, UEFI firmware, and boot runner from devices/garnet
-          if [ -d devices/garnet/prebuilt ]; then
-            cp devices/garnet/prebuilt/device-tree.dtb dist/payload/ || true
-            cp devices/garnet/prebuilt/SILICIUM_UEFI.fd dist/payload/ || true
-            cp devices/garnet/prebuilt/bootshim.bin dist/payload/ || true
-          fi
+          cp xnuloader/loader.efi dist/payload/prebuilt/loader.efi
+
+          # Boot scripts & CLI tools
           if [ -f devices/garnet/garnet-boot.sh ]; then
             cp devices/garnet/garnet-boot.sh dist/payload/
             chmod +x dist/payload/garnet-boot.sh
           fi
+          if [ -f devices/garnet/garnet-boot.ps1 ]; then
+            cp devices/garnet/garnet-boot.ps1 dist/payload/
+          fi
+          if [ -f devices/garnet/garnet-boot.bat ]; then
+            cp devices/garnet/garnet-boot.bat dist/payload/
+          fi
+          if [ -f xl ]; then
+            cp xl dist/payload/
+            chmod +x dist/payload/xl
+          fi
+          if [ -f xl.ps1 ]; then
+            cp xl.ps1 dist/payload/
+          fi
+          if [ -f xnuloader/mkpayload.py ]; then
+            cp xnuloader/mkpayload.py dist/payload/xnuloader/
+            chmod +x dist/payload/xnuloader/mkpayload.py
+          fi
+          if [ -f tools/frames.py ]; then
+            cp tools/frames.py dist/payload/tools/
+            chmod +x dist/payload/tools/frames.py
+          fi
 
-          # Create user-friendly README for fastboot execution
-          cat << 'EOF' > dist/payload/README.txt
-HakiOS for POCO X6 5G (garnet / SM7435-AB)
-===========================================
+          # Garnet prebuilts & boot image
+          if [ -d devices/garnet/prebuilt ]; then
+            cp devices/garnet/prebuilt/device-tree.dtb dist/payload/prebuilt/ || true
+            cp devices/garnet/prebuilt/SILICIUM_UEFI.fd dist/payload/prebuilt/ || true
+            if [ -f devices/garnet/prebuilt/garnet-boot.img ]; then
+              cp devices/garnet/prebuilt/garnet-boot.img dist/payload/
+            fi
+          fi
 
-Included in this release:
-- loader.efi: HakiOS UEFI Bootloader (Freestanding ARM64, 5GB K60 Notch memory map)
-- mach.development.bcm2837: XNU Kernel with Garnet drivers (FocalTech FT3683G, Adreno 710 GPU)
-- device-tree.dtb & SILICIUM_UEFI.fd: Qualcomm SM7435 hardware definitions and UEFI FD
-- garnet-boot.sh: Automated boot helper via fastboot
+          # Ramdisk placeholder
+          if [ -f "devices/garnet/userland/put system.apfs here.txt" ]; then
+            cp "devices/garnet/userland/put system.apfs here.txt" dist/payload/userland/
+          else
+            echo "Download and put the system.apfs inside this directory." > "dist/payload/userland/put system.apfs here.txt"
+          fi
 
-Quick Boot Instructions:
-1. Boot your POCO X6 into fastboot mode (Hold Volume Down + Power).
-2. Connect device via USB to your host computer.
-3. Run the automated boot helper:
-     chmod +x garnet-boot.sh
-     ./garnet-boot.sh
-EOF
+          # Generate clean release README
+          python3 -c "
+          readme = '''HakiOS for POCO X6 5G (garnet / SM7435-AB)
+          ===========================================
+
+          Included in this release package:
+          - garnet-boot.img       : Bootable UEFI + resident loader image
+          - mach.development.bcm2837 : XNU Kernel with Garnet drivers
+          - garnet-boot.sh        : Linux and Termux interactive boot manager
+          - garnet-boot.bat / .ps1: Windows PowerShell boot manager
+          - xl / xl.ps1           : Host fastboot communication CLI
+          - prebuilt/             : Hardware DTB, SILICIUM_UEFI.fd, loader.efi
+          - userland/             : User space mount and placeholder for system.apfs
+
+          Quick Boot Instructions:
+          1. Boot your POCO X6 into fastboot mode (Hold Volume Down + Power).
+          2. Boot the loader environment:
+               fastboot boot garnet-boot.img
+          3. Launch the boot manager:
+               - On Linux / Termux: ./garnet-boot.sh
+               - On Windows       : double-click garnet-boot.bat (or run .\\\\garnet-boot.ps1)
+          '''
+          with open('dist/payload/README.txt', 'w') as f:
+              f.write(readme.strip() + '\\n')
+          "
 
           # Package zip archive
           ARCHIVE_NAME="hakios-garnet-${GITHUB_REF_NAME:-$GITHUB_SHA}.zip"
-          # Sanitize slashes in branch names if applicable
           ARCHIVE_NAME=$(echo "$ARCHIVE_NAME" | tr '/' '-')
           cd dist/payload
           zip -r "../../dist/$ARCHIVE_NAME" *
