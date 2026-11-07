@@ -14,6 +14,8 @@ swipes 110 to 115 frames a second, Settings' scroll 118, the home button 106, re
 and **120 frames a second has not been reached**. [Metal on the Adreno](docs/reference/metal.md),
 [the measurements](docs/reference/metal-measurements.md).
 
+**Port Update (POCO X6 5G / Garnet):** HakiOS brings full Darwin boot support to the Qualcomm Snapdragon 7s Gen 2 (`SM7435-AB`) and Adreno 710 GPU. Touchscreen (FocalTech FT3683G TianMa panel) and Mesa OpenGL ES hardware acceleration are functional. Metal engine development for Adreno 710 Gen7 architecture is actively underway. See [`devices/garnet`](https://github.com/JosephMontfort/hakios-sm7435).
+
 Start with [Getting started](docs/getting-started/index.md), [On the phone](docs/getting-started/phone.md) or
 [Port a device](docs/porting/index.md). What works, part by part: [the documentation's front page](docs/index.md#what-works).
 
@@ -23,6 +25,7 @@ Start with [Getting started](docs/getting-started/index.md), [On the phone](docs
 |---|---|
 | [hakios-xnu-kernel](https://github.com/oosexgang/hakios-xnu-kernel) | **common**: the kernel port, every common driver, the loader, user space, the tools, this documentation, and `devices/qemu` |
 | [`hakios-metal/`](hakios-metal) | Metal's command model on the Adreno, through the kernel's GPU driver |
+| [hakios-sm7435](https://github.com/JosephMontfort/hakios-sm7435) | POCO X6 5G (garnet): its defconfig, status, UEFI platform, firmware script, and Qualcomm Snapdragon 7s Gen 2 SoC layer |
 | [hakios-sm7325](https://github.com/oosexgang/hakios-sm7325) | POCO X5 Pro 5G: its defconfig, status, UEFI platform, firmware script, and its SoC's layer (Qualcomm SC7280 family) |
 | [hakios-mt6768](https://github.com/oosexgang/hakios-mt6768) | Infinix Hot 20 (MediaTek Helio G85): an experimental port with its own loader. Not in this repository's manifest |
 | [hakios-uefi](https://github.com/oosexgang/hakios-uefi) | the firmware that starts the loader: Mu-Silicium with HakiOS's boot path, banner and name, and HakiOS's U-Boot |
