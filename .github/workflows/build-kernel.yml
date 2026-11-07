@@ -183,24 +183,24 @@ jobs:
             cp xl.ps1 dist/payload/
           fi
 
-          # Image packing tools (mkxnuimg.py in root, mkpayload.py in xnu_loader & xnuloader)
+          # Image packing tools (mkxnuimg.py in root, mkpayload.py in xnuloader)
           cp mkxnuimg.py dist/payload/mkxnuimg.py
           chmod +x dist/payload/mkxnuimg.py
 
-          mkdir -p dist/payload/xnuloader dist/payload/xnu_loader
+          mkdir -p dist/payload/xnuloader
           cp xnuloader/mkpayload.py dist/payload/xnuloader/mkpayload.py
-          cp xnuloader/mkpayload.py dist/payload/xnu_loader/mkpayload.py
-          chmod +x dist/payload/xnuloader/mkpayload.py dist/payload/xnu_loader/mkpayload.py
+          chmod +x dist/payload/xnuloader/mkpayload.py
 
-          # Garnet prebuilts & boot image
+          # Pack garnet-boot.img with the newly built loader.efi into root of payload
+          python3 xnuloader/mkpayload.py -o /tmp/usb-payload.bin loader.efi=xnuloader/loader.efi splash=devices/garnet/prebuilt/splash --usb --no-version
+          python3 mkxnuimg.py -d garnet -p /tmp/usb-payload.bin -o dist/payload/garnet-boot.img
+
+          # Garnet prebuilts & root filesystem (NO DUPLICATES: root.apfs only in userland/, garnet-boot.img only in root)
           if [ -d devices/garnet/prebuilt ]; then
             cp -a devices/garnet/prebuilt/. dist/payload/prebuilt/ || true
-            if [ -f devices/garnet/prebuilt/garnet-boot.img ]; then
-              cp devices/garnet/prebuilt/garnet-boot.img dist/payload/
-            fi
+            rm -f dist/payload/prebuilt/garnet-boot.img dist/payload/prebuilt/root.apfs
             if [ -f devices/garnet/prebuilt/root.apfs ]; then
               cp devices/garnet/prebuilt/root.apfs dist/payload/userland/root.apfs
-              cp devices/garnet/prebuilt/root.apfs dist/root.apfs
             fi
           fi
 
