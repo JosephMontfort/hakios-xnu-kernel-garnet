@@ -29,7 +29,7 @@ echo 'BUILD/' >> .git/info/exclude
 git apply --whitespace=nowarn "$HERE/hakios.patch"
 cp -a "$HERE/files/." .
 # HFS Plus (the data volume): Apple's release, fetched like XNU, and this port's changes over it
-"$HERE/hfs/hfs.sh" put "$DIR"
+bash "$HERE/hfs/hfs.sh" put "$DIR"
 # the drivers are kept by subsystem (drivers/<subsystem>/), not at their place in Apple's tree: drivers/map says where
 # each one goes, one line per file: "<subsystem> <path in the tree>"
 NDRIVERS=0

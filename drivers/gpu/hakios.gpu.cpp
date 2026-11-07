@@ -57,6 +57,14 @@ void hakios_gpu_unmap(uint64_t address, uint64_t size);
 void hakios_gpu_to_memory(void * start, uint64_t size);
 uint32_t hakios_gpu_submit(const uint64_t * addresses, const uint32_t * words, uint32_t count);
 extern uint32_t gpu_log;
+extern uint32_t gDetLog;
+
+#define IOLog(...) do { \
+	(IOLog)(__VA_ARGS__); \
+	if (gDetLog) { \
+		printf(__VA_ARGS__); \
+	} \
+} while (0)
 bool hakios_gpu_done(uint32_t fence);
 uint32_t hakios_gpu_last(void);
 void hakios_gpu_worked(uint64_t * microseconds, uint32_t * submissions, uint32_t by[7]);
@@ -643,7 +651,11 @@ HakiosGPUUserClient::newBuffer(IOMemoryDescriptor * memory, uint64_t from, uint6
 		IOByteCount length = 0;
 		addr64_t phys = memory->getPhysicalSegment(from + offset, &length, kIOMemoryMapperNone);
 
-		mapped = phys != 0 && hakios_gpu_map(b->address + offset, phys, flags & MSM_BO_GPU_READONLY);
+		if (phys == 0 || (phys + 4096) > (1ull << 36)) {
+			mapped = false;
+			break;
+		}
+		mapped = hakios_gpu_map(b->address + offset, phys, flags & MSM_BO_GPU_READONLY);
 	}
 	hakios_gpu_mapped();
 	if (!mapped) {
@@ -795,6 +807,10 @@ HakiosGPUUserClient::gemNew(struct msm_gem_new * request)
 		memory->release();
 		return kIOReturnNoMemory;
 	}
+	if (gpu_log >= 2) {
+		IOLog("HakiosGPU: newBuffer size %llu flags 0x%x -> handle %u (total %u buffers, %llu MB)\n",
+		    size, request->flags, request->handle, fBufferCount, fBufferBytes >> 20);
+	}
 	return kIOReturnSuccess;
 }
 
@@ -865,6 +881,11 @@ HakiosGPUUserClient::surfaceBuffer(struct hakios_surface * request)
 		memory->release();
 		MiniIOSurfaceDrop(s);
 		return kIOReturnNoMemory;
+	}
+	if (gpu_log >= 2) {
+		IOLog("HakiosGPU: surfaceBuffer s=%p id=%u client=%p addr=%#llx %ux%u bpr=%u size=%llu -> handle %u\n",
+		    s, request->surface, s->client, s->clientAddress, s->info.width, s->info.height,
+		    s->info.bytesPerRow, size, request->handle);
 	}
 	return kIOReturnSuccess;
 }

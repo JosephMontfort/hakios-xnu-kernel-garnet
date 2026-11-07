@@ -80,7 +80,7 @@ CPUMASK	arg	cpumask	Loader	l	loader.c
 DDR	arg	ddr	CPU, memory and boot	k	hakios.cpufreq.c	the memory's bus clock managers ("BCM") in the command database the boot loader left, with what is needed to vote for bandwidth on them -- only read
 DDR_REST	arg	ddr_rest	CPU, memory and boot	k	hakios.cpufreq.c	
 DDR_VOTE	arg	ddr_vote	CPU, memory and boot	k	hakios.cpufreq.c	
-DETLOG	arg	detlog	User space	k	hakios.adreno710.c	
+DETLOG	arg	detlog	CPU, memory and boot	k	(patch),hakios.adreno710.c	
 DISPLAY_PROBE	arg	display_probe	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	before any step: read what the firmware left the display controller doing (display_probe() below; two clocks are turned on, nothing else written)
 FB_BEAM	arg	fb_beam	GPU and display	k	MiniIOMobileFramebuffer.cpp	frames written to the panel's memory whenever their beat comes, as before
 FB_BEAT	arg	fb_beat	GPU and display	k	MiniIOMobileFramebuffer.cpp	
@@ -99,8 +99,12 @@ FBSUBTYPE	arg	fbsubtype	GPU and display	k	MiniIOMobileFramebuffer.cpp
 FBTRACE	arg	fbtrace	GPU and display	k	MiniIOMobileFramebuffer.cpp	log the first N calls of every selector (default 3)
 FBWIDTH	arg	fbwidth	GPU and display	ku	MiniIOMobileFramebuffer.cpp,inject_sb.c	
 GAMUT	arg	gamut	Loader	l	loader.c	
-GARNET_GPU	arg	garnet_gpu	User space	k	hakios.adreno710.c	
-GARNET_TOUCH	arg	garnet_touch	User space	k	hakios.focaltech.c	
+GARNET_BUTTONS	arg	garnet_buttons	Audio and battery	k	hakios.buttons.c,hakios.cpufreq.c,hakios.speaker.c	
+GARNET_CPUFREQ	arg	garnet_cpufreq	CPU, memory and boot	k	hakios.cpufreq.c	
+GARNET_GPU	arg	garnet_gpu	CPU, memory and boot	k	hakios.adreno710.c,hakios.cpufreq.c	
+GARNET_ROOT_END	arg	garnet_root_end	CPU, memory and boot	k	(patch)	
+GARNET_SPEAKER	arg	garnet_speaker	Audio and battery	k	hakios.speaker.c	
+GARNET_TOUCH	arg	garnet_touch	Audio and battery	k	hakios.buttons.c,hakios.cpufreq.c,hakios.focaltech.c,hakios.speaker.c	
 GL	arg	gl	User space	u	inject.c,inject_sb.c	not even with a GPU; gl=1: also without one, by Mesa's software driver (slow; for working on eagl.c in QEMU)
 GLBLIT	arg	glblit	GPU and display	u	eagl.c	the surface's memory, as before
 GLCENSUS	arg	glcensus	GPU and display	u	eagl.c	
@@ -149,6 +153,7 @@ MACHINE_NAME	arg	machine_name	CPU, memory and boot	k	GenericARMPE.cpp
 MEMBENCH	arg	membench	CPU, memory and boot	k	hakios.cpufreq.c	
 METAL	arg	metal	GPU and display	ku	HakiosMetal.m,MiniIOMobileFramebuffer.cpp,inject_sb.c	only the program metal_test (userland/src/metal_test.m): the safe level, for seeing what Metal does with the device
 METAL_ALL	arg	metal_all	User space	u	HakiosMetalCA.m	
+METAL_CLASS	arg	metal_class	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 METAL_DEFER	arg	metal_defer	User space	u	HakiosMetalCA.m	this queue's command buffers recorded by a thread of hakios-metal's own (deferred recording), so that the window server's render thread does not wait
 METAL_DUMP	arg	metal_dump	User space	u	HakiosMetalCA.m	
 METAL_FPS	arg	metal_fps	User space	u	HakiosMetalCA.m	each draw of a sysmem pass timed alone, by program (only sysmem passes are: without metal_gmem=1)
@@ -157,6 +162,7 @@ METAL_GMEM_DRAWS	arg	metal_gmem_draws	User space	u	HakiosMetalCA.m	GMEM for a pa
 METAL_GMEM_OFF	arg	metal_gmem_off	User space	u	HakiosMetalCA.m	
 METAL_LUMA_BOOST	arg	metal_luma_boost	User space	u	HakiosMetalCA.m	
 METAL_M2V	arg	metal_m2v	User space	u	HakiosMetalCA.m	
+METAL_NAME	arg	metal_name	GPU and display	k	MiniIOMobileFramebuffer.cpp	
 METAL_SKIP	arg	metal_skip	User space	u	HakiosMetalCA.m	
 METAL_TRACE	arg	metal_trace	User space	u	HakiosMetalCA.m	
 METAL_WATCH	arg	metal_watch	User space	u	inject.c	
@@ -242,6 +248,7 @@ SOUND_GAIN	arg	sound_gain	Audio and battery	k	hakios.sound.c
 SOUND_GUARD_AS	arg	sound_guard_as	Audio and battery	k	hakios.sound.c	
 SOUND_PAUSE	arg	sound_pause	Audio and battery	k	hakios.sound.c	
 SOUND_SECS	arg	sound_secs	Audio and battery	k	hakios.sound.c	
+SPEAKER_GARNET	arg	speaker_garnet	Audio and battery	k	hakios.speaker.c	
 SPEAKER_PROBE	arg	speaker_probe	Audio and battery	k	hakios.speaker.c	reads registers and nothing else: the pins, the power names (below)
 SURF_CLEAR	arg	surf_clear	GPU and display	k	MiniIOSurface.cpp	kept memory is given out as it is (to see what the clearing costs; a surface is then not all zeroes)
 SURF_WRAP	arg	surf_wrap	GPU and display	k	MiniIOSurface.cpp	surfaces around the client's pictures refused, as before methodWrapClientImage (for comparing)

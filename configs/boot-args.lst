@@ -108,7 +108,11 @@ fbsubtype	k
 fbtrace	k
 fbwidth	ku
 gamut	l
+garnet_buttons	k
+garnet_cpufreq	k
 garnet_gpu	k
+garnet_root_end	k
+garnet_speaker	k
 garnet_touch	k
 gl	u
 glblit	u
@@ -163,6 +167,7 @@ machine_name	k
 membench	k
 metal	ku
 metal_all	u
+metal_class	k
 metal_defer	u
 metal_dump	u
 metal_fps	u
@@ -171,6 +176,7 @@ metal_gmem_draws	u
 metal_gmem_off	u
 metal_luma_boost	u
 metal_m2v	u
+metal_name	k
 metal_skip	u
 metal_trace	u
 metal_watch	u
@@ -266,6 +272,7 @@ sound_gain	k
 sound_guard_as	k
 sound_pause	k
 sound_secs	k
+speaker_garnet	k
 speaker_probe	k
 surf_clear	k
 surf_wrap	k

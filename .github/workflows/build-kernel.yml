@@ -115,14 +115,49 @@ jobs:
             exit 1
           fi
 
+      - name: Compile Userland Dynamic Libraries & Drivers
+        run: |
+          source xnu-env.sh
+          SDK="$THEOS/sdks/iPhoneOS16.5.sdk"
+          FRAMEWORKS="-F $SDK/System/Library/Frameworks"
+
+          cd userland
+          mkdir -p obj
+
+          # 1. HakiosMetal bundle
+          xnu-clang -arch arm64 -isysroot "$SDK" $FRAMEWORKS -O1 \
+            -bundle -framework Foundation -framework Metal -lobjc \
+            -Isrc -o obj/HakiosMetal src/HakiosMetal.m src/hakios_metallib.c || true
+          if [ -f obj/HakiosMetal ]; then
+            mkdir -p obj/HakiosMetal.bundle
+            cp obj/HakiosMetal obj/HakiosMetal.bundle/
+            cp src/HakiosMetal.plist obj/HakiosMetal.bundle/Info.plist
+          fi
+
+          # 2. Injected daemons (backboardd & SpringBoard)
+          xnu-clang -arch arm64 -isysroot "$SDK" $FRAMEWORKS -O2 \
+            -dynamiclib -install_name /redwood/lib/libredwood.dylib \
+            -framework CoreFoundation -framework IOKit -framework IOSurface -lobjc \
+            -o obj/libredwood.dylib src/inject.c
+
+          xnu-clang -arch arm64 -isysroot "$SDK" $FRAMEWORKS -O2 \
+            -dynamiclib -install_name /redwood/lib/libredwood-sb.dylib \
+            -framework CoreFoundation -framework IOKit -framework CoreGraphics -framework IOSurface -lobjc \
+            -o obj/libredwood-sb.dylib src/inject_sb.c
+
+          # 3. Sleep daemon stub
+          xnu-clang -arch arm64 -isysroot "$SDK" $FRAMEWORKS -O2 \
+            -o obj/sleepd_stub src/sleepd_stub.c
+          cd ..
+
       - name: Package Distributable Garnet Release
         run: |
-          mkdir -p dist/payload/userland dist/payload/prebuilt dist/payload/xnuloader dist/payload/tools
+          mkdir -p dist/payload/userland dist/payload/prebuilt
           K="xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837"
 
-          # Core boot binaries
+          # Core boot binaries (standalone in dist/ and structured inside payload/prebuilt)
           cp "$K" dist/mach.development.bcm2837
-          cp "$K" dist/payload/mach.development.bcm2837
+          cp "$K" dist/payload/prebuilt/mach.development.bcm2837
           if [ -f "${K}.unstripped" ]; then
             cp "${K}.unstripped" dist/mach.development.bcm2837.unstripped
           fi
@@ -147,14 +182,6 @@ jobs:
           if [ -f xl.ps1 ]; then
             cp xl.ps1 dist/payload/
           fi
-          if [ -f xnuloader/mkpayload.py ]; then
-            cp xnuloader/mkpayload.py dist/payload/xnuloader/
-            chmod +x dist/payload/xnuloader/mkpayload.py
-          fi
-          if [ -f tools/frames.py ]; then
-            cp tools/frames.py dist/payload/tools/
-            chmod +x dist/payload/tools/frames.py
-          fi
 
           # Garnet prebuilts & boot image
           if [ -d devices/garnet/prebuilt ]; then
@@ -162,6 +189,10 @@ jobs:
             cp devices/garnet/prebuilt/SILICIUM_UEFI.fd dist/payload/prebuilt/ || true
             if [ -f devices/garnet/prebuilt/garnet-boot.img ]; then
               cp devices/garnet/prebuilt/garnet-boot.img dist/payload/
+            fi
+            if [ -f devices/garnet/prebuilt/root.apfs ]; then
+              cp devices/garnet/prebuilt/root.apfs dist/payload/userland/root.apfs
+              cp devices/garnet/prebuilt/root.apfs dist/root.apfs
             fi
           fi
 
@@ -178,13 +209,16 @@ jobs:
           ===========================================
 
           Included in this release package:
-          - garnet-boot.img       : Bootable UEFI + resident loader image
-          - mach.development.bcm2837 : XNU Kernel with Garnet drivers
-          - garnet-boot.sh        : Linux and Termux interactive boot manager
-          - garnet-boot.bat / .ps1: Windows PowerShell boot manager
-          - xl / xl.ps1           : Host fastboot communication CLI
-          - prebuilt/             : Hardware DTB, SILICIUM_UEFI.fd, loader.efi
-          - userland/             : User space mount and placeholder for system.apfs
+          - garnet-boot.img                   : Bootable UEFI + resident loader image
+          - garnet-boot.sh                    : Linux and Termux interactive boot manager
+          - garnet-boot.bat / .ps1            : Windows boot manager
+          - xl / xl.ps1                       : Host fastboot communication CLI
+          - prebuilt/mach.development.bcm2837 : XNU Kernel with Garnet drivers
+          - prebuilt/loader.efi               : Standalone resident XNU loader
+          - prebuilt/device-tree.dtb          : Garnet hardware device tree
+          - prebuilt/SILICIUM_UEFI.fd         : Silicium UEFI payload
+          - userland/root.apfs                : Root filesystem (drivers & LaunchDaemons)
+          - userland/put system.apfs here.txt : Instructions for iOS system ramdisk
 
           Quick Boot Instructions:
           1. Boot your POCO X6 into fastboot mode (Hold Volume Down + Power).
@@ -198,7 +232,7 @@ jobs:
               f.write(readme.strip() + '\\n')
           "
 
-          # Package zip archive
+          # Package zip archive for GitHub Releases
           ARCHIVE_NAME="hakios-garnet-${GITHUB_REF_NAME:-$GITHUB_SHA}.zip"
           ARCHIVE_NAME=$(echo "$ARCHIVE_NAME" | tr '/' '-')
           cd dist/payload
@@ -210,8 +244,8 @@ jobs:
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hakios-garnet-build
-          path: dist/*
+          name: hakios-garnet-main
+          path: dist/payload/
           if-no-files-found: error
 
       - name: Create GitHub Release

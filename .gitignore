@@ -50,6 +50,7 @@ __pycache__/
 /xnuloader/*
 !/xnuloader/build.sh
 !/xnuloader/efi.h
+!/xnuloader/identity.h
 !/xnuloader/loader.c
 !/xnuloader/mkidentity.py
 !/xnuloader/mkpayload.py
@@ -107,7 +108,7 @@ __pycache__/
 /tools/macos-bin/platform-tools/
 
 # made at build time from the device tree of the builder's own IPSW (xnuloader/mkidentity.sh)
-/xnuloader/identity.h
+!/xnuloader/identity.h
 !/xnuloader/im4p.py
 !/xnuloader/mkidentity.sh
 

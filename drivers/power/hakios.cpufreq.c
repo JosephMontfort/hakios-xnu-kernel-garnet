@@ -40,7 +40,7 @@ tell(const char *format, ...) __printflike(1, 2);
 static void
 tell(const char *format, ...)
 {
-	char line[256];
+	__attribute__((uninitialized)) char line[256];
 	va_list list;
 
 	va_start(list, format);
@@ -54,7 +54,8 @@ tell(const char *format, ...)
 	}
 }
 
-#define EPSS_PHYS               0x18591000UL    /* three groups ("domains") of 0x1000: small cores, big, biggest */
+#define REDWOOD_EPSS_PHYS       0x18591000UL    /* three groups ("domains") of 0x1000: small cores, big, biggest */
+#define GARNET_EPSS_PHYS        0x17d91000UL    /* two groups of 0x1000: 4 silver (A55), 4 gold (A78) */
 #define EPSS_DOMAIN_SIZE        0x1000UL
 #define EPSS_DOMAINS            3
 #define EPSS_FREQ_TABLE         0x100           /* a word per row: [31:30] clock source, [7:0] multiple of 19.2 MHz */
@@ -62,6 +63,19 @@ tell(const char *format, ...)
 #define EPSS_PERF_STATE         0x320           /* the row that is wanted */
 #define XO_KHZ                  19200
 #define ALTERNATE_KHZ           300000          /* source 0: a fixed 300 MHz */
+
+static bool
+detect_garnet_cpufreq(void)
+{
+	uint32_t val = 0;
+	if (PE_parse_boot_argn("garnet_cpufreq", &val, sizeof(val)) ||
+	    PE_parse_boot_argn("garnet_touch", &val, sizeof(val)) ||
+	    PE_parse_boot_argn("garnet_buttons", &val, sizeof(val)) ||
+	    PE_parse_boot_argn("garnet_gpu", &val, sizeof(val))) {
+		return true;
+	}
+	return false;
+}
 
 /* How fast a simple loop runs, in thousands of iterations per millisecond. */
 static uint32_t
@@ -83,6 +97,9 @@ domain_of(uint32_t phys_id)
 {
 	uint32_t core = (phys_id >> 8) & 0xff;
 
+	if (detect_garnet_cpufreq()) {
+		return core < 4 ? 0 : 1;
+	}
 	return core < 4 ? 0 : core < 7 ? 1 : 2;
 }
 
@@ -91,8 +108,9 @@ raise_domain(uint32_t domain, uint32_t cores)
 {
 	uint32_t top = 0, top_khz = 0, was;
 	vm_offset_t base;
+	uint64_t phys_base = detect_garnet_cpufreq() ? GARNET_EPSS_PHYS : REDWOOD_EPSS_PHYS;
 
-	base = ml_io_map(EPSS_PHYS + domain * EPSS_DOMAIN_SIZE, EPSS_DOMAIN_SIZE);
+	base = ml_io_map(phys_base + domain * EPSS_DOMAIN_SIZE, EPSS_DOMAIN_SIZE);
 	for (uint32_t row = 0; row < EPSS_TABLE_ROWS; row++) {
 		uint32_t entry = *(volatile uint32_t *)(base + EPSS_FREQ_TABLE + 4 * row);
 		uint32_t khz = (entry >> 30) ? XO_KHZ * (entry & 0xff) : ALTERNATE_KHZ;
@@ -338,7 +356,8 @@ cpufreq_wanted(void)
 {
 	uint32_t on = 0;
 
-	return PE_parse_boot_argn("cpufreq", &on, sizeof(on)) && on != 0;
+	return (PE_parse_boot_argn("cpufreq", &on, sizeof(on)) && on != 0) ||
+	       (PE_parse_boot_argn("garnet_cpufreq", &on, sizeof(on)) && on != 0);
 }
 
 static void
@@ -380,7 +399,9 @@ ddr_look(void)
  * each (sc7280's qcom,tcs-config): every command with an address, and which of them go to the BCMs
  * above -- the bandwidth it asked for, and that is in force whenever the processors are awake.
  */
-#define RSC_PHYS                0x18220000UL
+#define REDWOOD_RSC_PHYS        0x18220000UL
+#define GARNET_RSC_PHYS         0x17a20000UL
+#define RSC_PHYS                (detect_garnet_cpufreq() ? GARNET_RSC_PHYS : REDWOOD_RSC_PHYS)
 #define RSC_SIZE                0x10000UL
 #define RSC_TCS(n, reg)         (0xd00 + 0x2a0 * (n) + (reg))
 #define RSC_TCS_COUNT           9
@@ -561,6 +582,8 @@ hakios_cpufreq_init(void)
 {
 	const ml_topology_info_t *topology = ml_get_topology_info();
 	uint32_t enabled = 0, membench = 0, cores[EPSS_DOMAINS] = { 0 }, before, here;
+	bool is_garnet = detect_garnet_cpufreq();
+	uint32_t num_domains = is_garnet ? 2 : EPSS_DOMAINS;
 
 	load_start();
 	enabled = 2;
@@ -572,7 +595,8 @@ hakios_cpufreq_init(void)
 		ddr_raise();
 	}
 	enabled = 0;
-	if (!PE_parse_boot_argn("cpufreq", &enabled, sizeof(enabled)) || !enabled) {
+	if ((!PE_parse_boot_argn("cpufreq", &enabled, sizeof(enabled)) || !enabled) &&
+	    (!PE_parse_boot_argn("garnet_cpufreq", &enabled, sizeof(enabled)) || !enabled)) {
 		return;
 	}
 	for (unsigned int i = 0; i < topology->num_cpus; i++) {
@@ -581,7 +605,7 @@ hakios_cpufreq_init(void)
 	/* (whichever core this thread happens to be on, and stays on or not: it only goes to the log) */
 	here = (uint32_t)(__builtin_arm_rsr64("MPIDR_EL1") >> 8) & 0xff;
 	before = loop_speed();
-	for (uint32_t domain = 0; domain < EPSS_DOMAINS; domain++) {
+	for (uint32_t domain = 0; domain < num_domains; domain++) {
 		if (cores[domain] != 0) {
 			raise_domain(domain, cores[domain]);
 		}

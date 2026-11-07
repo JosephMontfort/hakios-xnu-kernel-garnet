@@ -2024,9 +2024,16 @@ publishAccelerator(IOService * provider)
 		 * Metal for the screen; until that device can draw, a screen drawn without it is the working one.
 		 */
 		if (PE_parse_boot_argn("metal", &metal, sizeof(metal)) && metal != 0) {
-			accelerator->setProperty("MetalPluginName", "HakiosMetal");
-			accelerator->setProperty("MetalPluginClassName", "HakiosMetalDevice");
-			IOLog("MiniIOMobileFramebuffer: metal=1: the accelerator names HakiosMetal as its Metal plug-in\n");
+			char plugin_name[64] = "HakiosMetal";
+			char plugin_class[64] = "HakiosMetalDevice";
+
+			PE_parse_boot_argn("metal_name", plugin_name, sizeof(plugin_name));
+			PE_parse_boot_argn("metal_class", plugin_class, sizeof(plugin_class));
+
+			accelerator->setProperty("MetalPluginName", plugin_name);
+			accelerator->setProperty("MetalPluginClassName", plugin_class);
+			IOLog("MiniIOMobileFramebuffer: metal=%u: published MetalPluginName=%s, MetalPluginClassName=%s\n",
+			    metal, plugin_name, plugin_class);
 		}
 		accelerator->registerService();
 	}

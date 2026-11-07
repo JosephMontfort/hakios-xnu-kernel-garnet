@@ -2,13 +2,13 @@
 
 Made by `tools/boot-args.py --markdown`; CI fails if it is out of date with the source (`tools/boot-args.py --check`).
 
-Every argument that the kernel, the loader or user space of this port reads, and which file reads it. **357 arguments**: 286 read by the kernel, 14 by the loader, 68 by user space (one is read in more than one place).
+Every argument that the kernel, the loader or user space of this port reads, and which file reads it. **364 arguments**: 293 read by the kernel, 14 by the loader, 68 by user space (one is read in more than one place).
 
 This is a catalogue of what exists and who reads it, not a manual. What an argument means is in the head of the file that reads it. The stable switches have a symbol in the configuration (`tools/hakios-config.py help SYMBOL`, `docs/configs.md`); the rest are the knobs of bring-up (a driver's steps, pauses, traces, test modes) and can change with the driver. Any of them can be given in a configuration with `CONFIG_BOOTARGS="name=value ..."`, which checks that each name is in this list. What the arguments of the two Metal paths do: [Metal on the Adreno](reference/metal.md#boot-arguments).
 
 Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl kern.bootargs`).
 
-## GPU and display (78)
+## GPU and display (80)
 
 | Argument | Layer | Read by | Configuration | Set by |
 |---|---|---|---|---|
@@ -79,6 +79,8 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `gpu_log` | K | `hakios.adreno.c`, `hakios.adreno710.c` | `CONFIG_GPU_LOG` |  |
 | `hakios_kver` | K | `MiniIOMobileFramebuffer.cpp`, `hakios.version.c` |  | the loader (from the payload's kernel.ver) |
 | `metal` | KU | `HakiosMetal.m`, `MiniIOMobileFramebuffer.cpp`, `inject_sb.c` | `CONFIG_METAL` |  |
+| `metal_class` | K | `MiniIOMobileFramebuffer.cpp` | `CONFIG_METAL_CLASS` |  |
+| `metal_name` | K | `MiniIOMobileFramebuffer.cpp` | `CONFIG_METAL_NAME` |  |
 | `rec_mb` | K | `MiniIOMobileFramebuffer.cpp` | `CONFIG_REC_MB` |  |
 | `rec_ring` | K | `MiniIOMobileFramebuffer.cpp` | `CONFIG_REC_RING` |  |
 | `rec_secs` | K | `MiniIOMobileFramebuffer.cpp` | `CONFIG_REC_SECS` |  |
@@ -191,7 +193,7 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `soc_pas_mpss` | K | `hakios.mpss.c` | `CONFIG_SOC_PAS_MPSS` |  |
 | `soc_smem` | K | `hakios.mpss.c`, `hakios.socinfo.c` | `CONFIG_SOC_SMEM` |  |
 
-## Audio and battery (33)
+## Audio and battery (37)
 
 | Argument | Layer | Read by | Configuration | Set by |
 |---|---|---|---|---|
@@ -210,6 +212,9 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `battery_stop` | K | `hakios.battguard.c` | `CONFIG_BATTERY_STOP` |  |
 | `battery_stop_poll` | K | `hakios.battguard.c` | `CONFIG_BATTERY_STOP_POLL` |  |
 | `battmgr` | K | `hakios.adsp.c` | `CONFIG_BATTMGR` |  |
+| `garnet_buttons` | K | `hakios.buttons.c`, `hakios.cpufreq.c`, `hakios.speaker.c` | `CONFIG_GARNET_BUTTONS` |  |
+| `garnet_speaker` | K | `hakios.speaker.c` | `CONFIG_GARNET_SPEAKER` |  |
+| `garnet_touch` | K | `hakios.buttons.c`, `hakios.cpufreq.c`, `hakios.focaltech.c`, `hakios.speaker.c` | `CONFIG_GARNET_TOUCH` |  |
 | `mic` | K | `hakios.mic.c` | `CONFIG_MIC` |  |
 | `mic_adc` | K | `hakios.mic.c` | `CONFIG_MIC_ADC` |  |
 | `mic_input` | K | `hakios.mic.c` | `CONFIG_MIC_INPUT` |  |
@@ -226,6 +231,7 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `sound_guard_as` | K | `hakios.sound.c` | `CONFIG_SOUND_GUARD_AS` |  |
 | `sound_pause` | K | `hakios.sound.c` | `CONFIG_SOUND_PAUSE` |  |
 | `sound_secs` | K | `hakios.sound.c` | `CONFIG_SOUND_SECS` |  |
+| `speaker_garnet` | K | `hakios.speaker.c` | `CONFIG_SPEAKER_GARNET` |  |
 | `speaker_probe` | K | `hakios.speaker.c` | `CONFIG_SPEAKER_PROBE` |  |
 | `virtio_sound` | K | `hakios.virtio_sound.c` | `CONFIG_VIRTIO_SOUND` |  |
 
@@ -343,7 +349,7 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `thermal_tm0` | K | `hakios.thermal.c` | `CONFIG_THERMAL_TM0` |  |
 | `thermal_tm1` | K | `hakios.thermal.c` | `CONFIG_THERMAL_TM1` |  |
 
-## CPU, memory and boot (23)
+## CPU, memory and boot (27)
 
 | Argument | Layer | Read by | Configuration | Set by |
 |---|---|---|---|---|
@@ -355,7 +361,11 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `ddr` | K | `hakios.cpufreq.c` | `CONFIG_DDR` |  |
 | `ddr_rest` | K | `hakios.cpufreq.c` | `CONFIG_DDR_REST` |  |
 | `ddr_vote` | K | `hakios.cpufreq.c` | `CONFIG_DDR_VOTE` |  |
+| `detlog` | K | `(patch)`, `hakios.adreno710.c` | `CONFIG_DETLOG` |  |
 | `epoch` | K | `GenericARMPE.cpp` |  | xl (the host's clock) |
+| `garnet_cpufreq` | K | `hakios.cpufreq.c` | `CONFIG_GARNET_CPUFREQ` |  |
+| `garnet_gpu` | K | `hakios.adreno710.c`, `hakios.cpufreq.c` | `CONFIG_GARNET_GPU` |  |
+| `garnet_root_end` | K | `(patch)` | `CONFIG_GARNET_ROOT_END` |  |
 | `hv_wdt_pet` | K | `loader_return.c` |  | the loader, when it has armed the watchdog (the runner also passes it) |
 | `loader_return_after` | KL | `loader.c`, `loader_return.c` |  | xl (XL_SECS) |
 | `machine_name` | K | `GenericARMPE.cpp` | `CONFIG_MACHINE_NAME` |  |
@@ -393,7 +403,7 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `ufs` | L | `loader.c` | `CONFIG_UFS` |  |
 | `ufs_probe` | L | `loader.c` | `CONFIG_UFS_PROBE` |  |
 
-## User space (42)
+## User space (39)
 
 | Argument | Layer | Read by | Configuration | Set by |
 |---|---|---|---|---|
@@ -406,9 +416,6 @@ Layers: **K** the kernel, **L** the loader, **U** user space (through `sysctl ke
 | `ca_vbl` | U | `inject.c` | `CONFIG_CA_VBL` |  |
 | `caenv` | U | `inject.c`, `inject_sb.c` | `CONFIG_CAENV` |  |
 | `cc_fade` | U | `inject_sb.c` | `CONFIG_CC_FADE` |  |
-| `detlog` | K | `hakios.adreno710.c` | `CONFIG_DETLOG` |  |
-| `garnet_gpu` | K | `hakios.adreno710.c` | `CONFIG_GARNET_GPU` |  |
-| `garnet_touch` | K | `hakios.focaltech.c` | `CONFIG_GARNET_TOUCH` |  |
 | `gl` | U | `inject.c`, `inject_sb.c` | `CONFIG_GL` |  |
 | `glcompile` | U | `inject.c` | `CONFIG_GLCOMPILE` |  |
 | `glno` | U | `inject.c` | `CONFIG_GLNO` |  |

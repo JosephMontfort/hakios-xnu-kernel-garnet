@@ -130,6 +130,11 @@ psci_smp_init(void)
 void
 psci_smp_cpu_reached(uint32_t stage)
 {
+	uint64_t cpacr;
+	__asm__ volatile("mrs %0, cpacr_el1" : "=r"(cpacr));
+	cpacr |= (3ULL << 20);
+	__asm__ volatile("msr cpacr_el1, %0\nisb" :: "r"(cpacr));
+
 	os_atomic_store(&psci_smp_cpu_stage[cpu_number()], stage, release);
 }
 
@@ -137,6 +142,11 @@ psci_smp_cpu_reached(uint32_t stage)
 void
 psci_smp_cpu_running(void)
 {
+	uint64_t cpacr;
+	__asm__ volatile("mrs %0, cpacr_el1" : "=r"(cpacr));
+	cpacr |= (3ULL << 20);
+	__asm__ volatile("msr cpacr_el1, %0\nisb" :: "r"(cpacr));
+
 	psci_smp_cpu_reached(PSCI_SMP_CPU_RUNNING);
 }
 

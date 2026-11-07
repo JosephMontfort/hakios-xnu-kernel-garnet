@@ -67,7 +67,7 @@ static int say(const char *format, ...) __printflike(1, 2);
 static int
 say(const char *format, ...)
 {
-	char line[400];
+	__attribute__((uninitialized)) char line[400];
 	va_list list;
 
 	va_start(list, format);
@@ -94,11 +94,12 @@ wr(vm_offset_t address, uint32_t value)
 
 /* ---- the PMIC arbiter ---------------------------------------------------------------------------- */
 
-#define ARB_CORE_PHYS           0x0c440000UL    /* "core": the version, and which peripheral each channel is */
-#define ARB_CORE_SIZE           0x1100UL
-#define ARB_CNFG_PHYS           0x0c40a000UL    /* "cnfg": which system owns each channel */
-#define ARB_CNFG_SIZE           0x1000UL
-#define ARB_OBSERVER_PHYS       0x0e600000UL    /* "obsrvr": 0x10000 per system, 0x80 per channel in it */
+#define ARB_CORE_PHYS           0x0c400000UL    /* Garnet (SM7435): "core": the version, and which peripheral each channel is */
+#define ARB_CORE_SIZE           0x3000UL
+#define ARB_CNFG_PHYS           0x0c42d000UL    /* Garnet (SM7435): "cnfg": which system owns each channel */
+#define ARB_CNFG_SIZE           0x4000UL
+#define ARB_CHNLS_PHYS          0x0c500000UL    /* Garnet (SM7435): "chnls": channel read/write window */
+#define ARB_OBSERVER_PHYS       0x0c440000UL    /* Garnet (SM7435): "obsrvr": 0x10000 per system, 0x80 per channel in it */
 #define ARB_OBSERVER_SIZE       0x10000UL       /* ours is the first */
 #define ARB_SYSTEM              0               /* who we are to the arbiter: the device tree's "qcom,ee" */
 
@@ -106,10 +107,12 @@ wr(vm_offset_t address, uint32_t value)
 #define ARB_VERSION_5           0x50000000u     /* what follows is version 5's; 7 moved things again */
 #define ARB_VERSION_7           0x70000000u
 #define ARB_FEATURES            0x004           /* [10:0] the number of channels */
-#define ARB_CHANNEL(n)          (0x900 + 4 * (n))       /* core: [19:8] slave and peripheral, [24] interrupts go to the owner */
+#define ARB_CHANNEL_V5(n)       (0x900 + 4 * (n))       /* core: [19:8] slave and peripheral, [24] interrupts go to the owner */
+#define ARB_CHANNEL_V7(n)       (0x2000 + 4 * (n))
 #define ARB_CHANNEL_INTERRUPTS  (1u << 24)
-#define ARB_OWNER(n)            (0x700 + 4 * (n))       /* cnfg: [2:0] the system that may write through channel n */
-#define ARB_MAX_CHANNELS        512
+#define ARB_OWNER_V5(n)         (0x700 + 4 * (n))       /* cnfg: [2:0] the system that may write through channel n */
+#define ARB_OWNER_V7(n)         (4 * (n))
+#define ARB_MAX_CHANNELS        1024
 
 #define OBSERVER_COMMAND        0x00
 #define OBSERVER_STATUS         0x08
@@ -123,6 +126,7 @@ wr(vm_offset_t address, uint32_t value)
 #define READ_TIMEOUT_US         2000            /* a read takes some tens of microseconds */
 
 static vm_offset_t arb_core, arb_cnfg, arb_observer;
+static bool is_arb_v7 = false;
 
 /* one transfer at a time through the arbiter: hakios_spmi_lock() (drivers/core/hakios.platform.c) */
 
@@ -133,7 +137,8 @@ struct peripheral {
 	bool            found;
 };
 static struct peripheral pon = { .name = "the PMK8350's power-on block", .id = 0x013 };          /* registers 0x1300 of slave 0 */
-static struct peripheral pin = { .name = "GPIO6 of the PM7325", .id = 0x18d };                   /* registers 0x8d00 of slave 1 */
+static struct peripheral pin = { .name = "GPIO1 of the PM6450", .id = 0x188 };                   /* registers 0x8800 of slave 1 */
+static struct peripheral vddio_pin = { .name = "PM6150L GPIO3 (touch_vddio)", .id = 0x4c2 };      /* registers 0xc200 of slave 4 */
 
 /* How the reads have gone: said once a minute. */
 static struct {
@@ -147,7 +152,9 @@ static struct {
 static const char *
 spmi_read(const struct peripheral *p, uint8_t reg, uint8_t *bytes, uint32_t count)
 {
-	vm_offset_t channel = arb_observer + 0x10000UL * ARB_SYSTEM + 0x80UL * p->channel;
+	vm_offset_t channel = arb_observer +
+	    (is_arb_v7 ? (0x8000UL * ARB_SYSTEM + 0x20UL * p->channel)
+	               : (0x10000UL * ARB_SYSTEM + 0x80UL * p->channel));
 	uint64_t start = mach_absolute_time(), now, interval, taken;
 	uint32_t status, data[2];
 	const char *problem = NULL;
@@ -197,12 +204,14 @@ static void
 find_channel(struct peripheral *p, uint32_t channels)
 {
 	for (uint32_t n = 0; n < channels; n++) {
-		uint32_t map = rd(arb_core + ARB_CHANNEL(n)), owner;
+		vm_offset_t ch_reg = is_arb_v7 ? ARB_CHANNEL_V7(n) : ARB_CHANNEL_V5(n);
+		vm_offset_t ow_reg = is_arb_v7 ? ARB_OWNER_V7(n) : ARB_OWNER_V5(n);
+		uint32_t map = rd(arb_core + ch_reg), owner;
 
 		if (map == 0 || ((map >> 8) & 0xfff) != p->id) {
 			continue;
 		}
-		owner = rd(arb_cnfg + ARB_OWNER(n)) & 7;
+		owner = rd(arb_cnfg + ow_reg) & 7;
 		printf("buttons: channel %u is %s (%#x); written by system %u%s\n", n, p->name, map, owner,
 		    (map & ARB_CHANNEL_INTERRUPTS) ? ", which also gets its interrupts" : "");
 		if (!p->found || owner == ARB_SYSTEM) {
@@ -212,6 +221,97 @@ find_channel(struct peripheral *p, uint32_t channels)
 	}
 	if (!p->found) {
 		printf("buttons: no channel of the arbiter is %s (slave %u, peripheral %#x)\n", p->name, p->id >> 8, p->id & 0xff);
+	}
+}
+
+/*
+ * Write 1 register of a peripheral through its read/write channel.
+ */
+static const char *
+spmi_write(const struct peripheral *p, uint8_t reg, uint8_t value)
+{
+	static vm_offset_t chnl_page = 0;
+	static uint16_t mapped_channel = 0xffff;
+	uint64_t start = mach_absolute_time(), now, interval;
+	uint32_t status;
+	const char *problem = NULL;
+
+	if (!p->found) {
+		return "peripheral channel not found";
+	}
+	if (mapped_channel != p->channel || chnl_page == 0) {
+		vm_offset_t phys = ARB_CHNLS_PHYS + (is_arb_v7 ? 0x1000UL * p->channel : 0x10000UL * p->channel);
+		chnl_page = ml_io_map(phys, 0x1000);
+		if (!chnl_page) {
+			return "failed to map SPMI write channel";
+		}
+		mapped_channel = p->channel;
+	}
+
+	nanoseconds_to_absolutetime(READ_TIMEOUT_US * (uint64_t)NSEC_PER_USEC, &interval);
+	hakios_spmi_lock();
+	wr(chnl_page + 0x10 /* CHANNEL_WDATA0 */, value);
+	wr(chnl_page + 0x00 /* CHANNEL_COMMAND */, (0u << 27) | ((uint32_t)reg << 4)); /* 1 byte write */
+	do {
+		status = rd(chnl_page + 0x08 /* CHANNEL_STATUS */);
+		now = mach_absolute_time();
+	} while (!(status & STATUS_DONE) && now - start < interval);
+	hakios_spmi_unlock();
+
+	if (!(status & STATUS_DONE)) {
+		problem = "no answer from the arbiter";
+	} else if (status & STATUS_DENIED) {
+		problem = "the arbiter refuses";
+	} else if (status & STATUS_FAILURE) {
+		problem = "the transfer failed";
+	} else if (status & STATUS_DROPPED) {
+		problem = "the transfer was dropped";
+	}
+	return problem;
+}
+
+bool
+garnet_enable_touch_vddio(void)
+{
+	if (!arb_core) {
+		arb_core = ml_io_map(ARB_CORE_PHYS, ARB_CORE_SIZE);
+		arb_cnfg = ml_io_map(ARB_CNFG_PHYS, ARB_CNFG_SIZE);
+		arb_observer = ml_io_map(ARB_OBSERVER_PHYS, ARB_OBSERVER_SIZE);
+		uint32_t version = rd(arb_core + ARB_VERSION);
+		is_arb_v7 = (version >= ARB_VERSION_7);
+	}
+	if (!vddio_pin.found) {
+		uint32_t channels = rd(arb_core + ARB_FEATURES) & 0x7ff;
+		if (channels == 0 || channels > ARB_MAX_CHANNELS) {
+			channels = ARB_MAX_CHANNELS;
+		}
+		find_channel(&vddio_pin, channels);
+	}
+	if (!vddio_pin.found) {
+		printf("buttons: PM6150L GPIO3 channel not found in arbiter!\n");
+		return false;
+	}
+
+	printf("buttons: configuring PM6150L GPIO3 (touch_vddio 1.8V)...\n");
+	/* Configure PM6150L GPIO 3 as digital output HIGH */
+	spmi_write(&vddio_pin, 0x40, 0x11); /* MODE: digital output (1 << 4), out_val=1 (1) */
+	spmi_write(&vddio_pin, 0x41, 0x00); /* DIG_VIN: VIN0 (1.8V) */
+	spmi_write(&vddio_pin, 0x42, 0x05); /* PULL: no pull (5) */
+	spmi_write(&vddio_pin, 0x44, 0x80); /* OUT_SRC: invert=1 -> constant HIGH */
+	spmi_write(&vddio_pin, 0x45, 0x03); /* DIG_OUT_CTL: push-pull (0), high drive strength (3) */
+	spmi_write(&vddio_pin, 0x46, 0x80); /* EN_CTL: enable (0x80) */
+
+	delay_for_interval(10, NSEC_PER_MSEC);
+
+	uint8_t status = 0;
+	const char *err = spmi_read(&vddio_pin, 0x10 /* REG_RT_STATUS */, &status, 1);
+	if (!err) {
+		printf("buttons: PM6150L GPIO3 (touch_vddio) level is now: %s (%#x)\n",
+		    (status & 0x01 /* GPIO_LEVEL */) ? "HIGH (1.8V ENABLED!)" : "LOW (0V DISABLED!)", status);
+		return (status & 0x01) != 0;
+	} else {
+		printf("buttons: failed to read touch_vddio status: %s\n", err);
+		return false;
 	}
 }
 
@@ -442,12 +542,14 @@ buttons_thread(void *parameter, __unused wait_result_t result)
 	arb_cnfg = ml_io_map(ARB_CNFG_PHYS, ARB_CNFG_SIZE);
 	arb_observer = ml_io_map(ARB_OBSERVER_PHYS, ARB_OBSERVER_SIZE);
 	version = rd(arb_core + ARB_VERSION);
+	is_arb_v7 = (version >= ARB_VERSION_7);
 	channels = rd(arb_core + ARB_FEATURES) & 0x7ff;
 	printf("buttons: PMIC arbiter version %#x, %u channels\n", version, channels);
-	if (version < ARB_VERSION_5 || version >= ARB_VERSION_7) {
-		printf("buttons: this driver knows version 5 of the arbiter only: no buttons\n");
+	if (version < ARB_VERSION_5 || version >= 0x80000000u) {
+		printf("buttons: this driver knows versions 5 to 7 of the arbiter only: no buttons\n");
 		goto out;
 	}
+	is_arb_v7 = (version >= ARB_VERSION_7);
 	if (channels == 0 || channels > ARB_MAX_CHANNELS) {
 		channels = ARB_MAX_CHANNELS;
 	}
@@ -458,6 +560,7 @@ buttons_thread(void *parameter, __unused wait_result_t result)
 	printf("buttons: step 2: look through the arbiter's table for the channels of the two peripherals\n");
 	find_channel(&pon, channels);
 	find_channel(&pin, channels);
+	find_channel(&vddio_pin, channels);
 	if (steps < 3) {
 		goto out;
 	}
@@ -465,6 +568,7 @@ buttons_thread(void *parameter, __unused wait_result_t result)
 	printf("buttons: step 3: the first transfers on the SPMI bus\n");
 	pon_known = identify(&pon, PON_TYPE, PON_SUBTYPE_HLOS, PON_SUBTYPE_HLOS);
 	pin_known = identify(&pin, GPIO_TYPE, GPIO_SUBTYPE_LV, GPIO_SUBTYPE_MV_VIN3);
+	garnet_enable_touch_vddio();
 	if (steps < 4) {
 		goto out;
 	}
@@ -573,10 +677,12 @@ hakios_buttons_init(void)
 	 * On with the touch screen (the phone, somebody at it) unless buttons=0 says otherwise: a hand
 	 * has pressed all three keys and each press and release was read as it was made.
 	 */
-	if (!PE_parse_boot_argn("buttons", &enabled, sizeof(enabled))) {
+	if (!PE_parse_boot_argn("buttons", &enabled, sizeof(enabled)) &&
+	    !PE_parse_boot_argn("garnet_buttons", &enabled, sizeof(enabled))) {
 		uint32_t touch_screen = 0;
 
-		enabled = PE_parse_boot_argn("touchscreen", &touch_screen, sizeof(touch_screen)) && touch_screen != 0;
+		enabled = (PE_parse_boot_argn("touchscreen", &touch_screen, sizeof(touch_screen)) && touch_screen != 0) ||
+		          (PE_parse_boot_argn("garnet_touch", &touch_screen, sizeof(touch_screen)) && touch_screen != 0);
 	}
 	if (!enabled) {
 		return;

@@ -172,7 +172,7 @@ rpmh_address(const char *name)
 	if (db->magic[0] != 0xdb || db->magic[1] != 0x30 || db->magic[2] != 0x03 || db->magic[3] != 0x0c) {
 		char msg[64];
 		uint32_t pos = 0;
-		append_str(msg, &pos, "goodix: no command database (magic ");
+		append_str(msg, &pos, "focaltech: no command database (magic ");
 		append_hex8(msg, &pos, db->magic[0]);
 		append_hex8(msg, &pos, db->magic[1]);
 		append_hex8(msg, &pos, db->magic[2]);
@@ -210,7 +210,7 @@ rpmh_wait(uint32_t reg, uint32_t mask, uint32_t value, const char *what)
 	}
 	char msg[80];
 	uint32_t pos = 0;
-	append_str(msg, &pos, "goodix: RPMh: timeout waiting for ");
+	append_str(msg, &pos, "focaltech: RPMh: timeout waiting for ");
 	append_str(msg, &pos, what);
 	append_str(msg, &pos, " (reg 0x");
 	append_hex32(msg, &pos, reg);
@@ -232,7 +232,7 @@ rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
 	/* the slot set must be idle, and switched off the way the hardware wants it: trigger, then enable */
 	for (int i = 0; rd(TCS(TCS_STATUS)) == 0; i++) {
 		if (i > 2000) {
-			loader_log_line("goodix: RPMh: the command slots stay busy\n");
+			loader_log_line("focaltech: RPMh: the command slots stay busy\n");
 			return false;
 		}
 		sleep_us(100);
@@ -261,154 +261,14 @@ rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
 	return done;
 }
 
-/* ---- PMIC SPMI touch VDDIO (1.8V) ----------------------------------------------------------------- */
-
-#define ARB_CORE_PHYS           0x0c400000UL    /* Garnet (SM7435): "core" */
-#define ARB_CORE_SIZE           0x3000UL
-#define ARB_CNFG_PHYS           0x0c42d000UL    /* Garnet (SM7435): "cnfg" */
-#define ARB_CNFG_SIZE           0x4000UL
-#define ARB_CHNLS_PHYS          0x0c500000UL    /* Garnet (SM7435): "chnls" */
-#define ARB_OBSERVER_PHYS       0x0c440000UL    /* Garnet (SM7435): "obsrvr" */
-#define ARB_OBSERVER_SIZE       0x10000UL
-
-#define ARB_VERSION             0x000
-#define ARB_VERSION_7           0x70000000u
-#define ARB_FEATURES            0x004
-#define ARB_CHANNEL_V5(n)       (0x900 + 4 * (n))
-#define ARB_CHANNEL_V7(n)       (0x2000 + 4 * (n))
-#define ARB_OWNER_V5(n)         (0x700 + 4 * (n))
-#define ARB_OWNER_V7(n)         (4 * (n))
-#define ARB_MAX_CHANNELS        1024
-#define ARB_SYSTEM              0
-
-#define SPMI_STATUS_DONE        (1u << 0)
-#define SPMI_STATUS_FAILURE     (1u << 1)
-#define SPMI_STATUS_DENIED      (1u << 2)
-#define SPMI_STATUS_DROPPED     (1u << 3)
-
-struct spmi_peripheral {
-	const char *name;
-	uint16_t id;            /* slave << 8 | peripheral */
-	uint16_t channel;
-	bool found;
-};
-
-static struct spmi_peripheral vddio_pin = { "PM6150L GPIO3", 0x1c2, 0, false };
-static vm_offset_t arb_core, arb_cnfg, arb_observer;
-static bool is_arb_v7 = true;
-
-extern void hakios_spmi_lock(void);
-extern void hakios_spmi_unlock(void);
-
-static void
-spmi_find_channel(struct spmi_peripheral *p, uint32_t channels)
-{
-	for (uint32_t n = 0; n < channels; n++) {
-		vm_offset_t ch_reg = is_arb_v7 ? ARB_CHANNEL_V7(n) : ARB_CHANNEL_V5(n);
-		vm_offset_t ow_reg = is_arb_v7 ? ARB_OWNER_V7(n) : ARB_OWNER_V5(n);
-		uint32_t map = rd(arb_core + ch_reg), owner;
-
-		if (map == 0 || ((map >> 8) & 0xfff) != p->id) {
-			continue;
-		}
-		owner = rd(arb_cnfg + ow_reg) & 7;
-		if (!p->found || owner == ARB_SYSTEM) {
-			p->found = true;
-			p->channel = (uint16_t)n;
-		}
-	}
-}
-
-static const char *
-spmi_write_reg(const struct spmi_peripheral *p, uint8_t reg, uint8_t value)
-{
-	static vm_offset_t chnl_page = 0;
-	static uint16_t mapped_channel = 0xffff;
-	uint64_t start = mach_absolute_time(), now, interval;
-	uint32_t status;
-	const char *problem = NULL;
-
-	if (!p->found) {
-		return "peripheral channel not found";
-	}
-	if (mapped_channel != p->channel || chnl_page == 0) {
-		vm_offset_t phys = ARB_CHNLS_PHYS + (is_arb_v7 ? 0x1000UL * p->channel : 0x10000UL * p->channel);
-		chnl_page = ml_io_map(phys, 0x1000);
-		if (!chnl_page) {
-			return "failed to map SPMI write channel";
-		}
-		mapped_channel = p->channel;
-	}
-
-	nanoseconds_to_absolutetime(2000 * (uint64_t)NSEC_PER_USEC, &interval);
-	hakios_spmi_lock();
-	wr(chnl_page + 0x10, value);
-	wr(chnl_page + 0x00, (0u << 27) | ((uint32_t)reg << 4));
-	do {
-		status = rd(chnl_page + 0x08);
-		now = mach_absolute_time();
-	} while (!(status & SPMI_STATUS_DONE) && now - start < interval);
-	hakios_spmi_unlock();
-
-	if (!(status & SPMI_STATUS_DONE)) {
-		problem = "no answer from the arbiter";
-	} else if (status & SPMI_STATUS_DENIED) {
-		problem = "the arbiter refuses";
-	} else if (status & SPMI_STATUS_FAILURE) {
-		problem = "the transfer failed";
-	} else if (status & SPMI_STATUS_DROPPED) {
-		problem = "the transfer was dropped";
-	}
-	return problem;
-}
-
-static bool
-garnet_enable_touch_vddio(void)
-{
-	if (!arb_core) {
-		arb_core = ml_io_map(ARB_CORE_PHYS, ARB_CORE_SIZE);
-		arb_cnfg = ml_io_map(ARB_CNFG_PHYS, ARB_CNFG_SIZE);
-		arb_observer = ml_io_map(ARB_OBSERVER_PHYS, ARB_OBSERVER_SIZE);
-		if (arb_core) {
-			uint32_t version = rd(arb_core + ARB_VERSION);
-			is_arb_v7 = (version >= ARB_VERSION_7);
-		}
-	}
-	if (!arb_core || !arb_cnfg) {
-		loader_log_line("focaltech: SPMI arbiter not mapped\n");
-		return false;
-	}
-	if (!vddio_pin.found) {
-		uint32_t channels = rd(arb_core + ARB_FEATURES) & 0x7ff;
-		if (channels == 0 || channels > ARB_MAX_CHANNELS) {
-			channels = ARB_MAX_CHANNELS;
-		}
-		spmi_find_channel(&vddio_pin, channels);
-	}
-	if (!vddio_pin.found) {
-		loader_log_line("focaltech: PM6150L GPIO3 channel not found in arbiter!\n");
-		return false;
-	}
-
-	loader_log_line("focaltech: configuring PM6150L GPIO3 (touch_vddio 1.8V)...\n");
-	spmi_write_reg(&vddio_pin, 0x40, 0x11);
-	spmi_write_reg(&vddio_pin, 0x41, 0x00);
-	spmi_write_reg(&vddio_pin, 0x42, 0x05);
-	spmi_write_reg(&vddio_pin, 0x44, 0x80);
-	spmi_write_reg(&vddio_pin, 0x45, 0x03);
-	spmi_write_reg(&vddio_pin, 0x46, 0x80);
-	sleep_ms(10);
-	return true;
-}
-
 /* The chip's power supply: ldoe9 (AVDD 3.224 V) via RPMh VRM and touch_vddio (1.8 V) via PMIC SPMI */
 static bool
 io_supply_on(void)
 {
-	loader_log_line("goodix: io_supply_on: enabling ldoe9 (AVDD 3.224V) and touch_vddio (1.8V)...\n");
+	loader_log_line("focaltech: io_supply_on: enabling ldoe9 (AVDD 3.224V) and touch_vddio (1.8V)...\n");
 	garnet_enable_touch_vddio();
 	if (!rsc || !cmd_db) {
-		loader_log_line("goodix: rsc or cmd_db not mapped!\n");
+		loader_log_line("focaltech: rsc or cmd_db not mapped!\n");
 		return false;
 	}
 	uint32_t base = rpmh_address("ldoe9");
@@ -416,7 +276,7 @@ io_supply_on(void)
 		base = rpmh_address("pm6150l_l9");
 	}
 	if (base == 0) {
-		loader_log_line("goodix: RPMh: \"ldoe9\" not found in cmd_db! Available entries:\n");
+		loader_log_line("focaltech: RPMh: \"ldoe9\" not found in cmd_db! Available entries:\n");
 		const struct cmd_db_header *db = (const struct cmd_db_header *)cmd_db;
 		for (unsigned s = 0; s < 8; s++) {
 			const struct cmd_db_slave *slave = &db->slave[s];
@@ -443,7 +303,7 @@ io_supply_on(void)
 	if ((base >> 16 & 0xf) != 4) {
 		char msg[80];
 		uint32_t pos = 0;
-		append_str(msg, &pos, "goodix: RPMh: ldoe9 address not VRM (0x");
+		append_str(msg, &pos, "focaltech: RPMh: ldoe9 address not VRM (0x");
 		append_hex32(msg, &pos, base);
 		append_str(msg, &pos, ")\n");
 		msg[pos] = 0;
@@ -453,7 +313,7 @@ io_supply_on(void)
 
 	char msg[80];
 	uint32_t pos = 0;
-	append_str(msg, &pos, "goodix: RPMh: ldoe9 is at 0x");
+	append_str(msg, &pos, "focaltech: RPMh: ldoe9 is at 0x");
 	append_hex32(msg, &pos, base);
 	append_str(msg, &pos, "\n");
 	msg[pos] = 0;
@@ -463,10 +323,10 @@ io_supply_on(void)
 	uint32_t data[3] = { 3224, 1, VRM_MODE_LDO_HPM };
 
 	if (!rpmh_write(address, data, 3)) {
-		loader_log_line("goodix: RPMh: write to ldoe9 failed\n");
+		loader_log_line("focaltech: RPMh: write to ldoe9 failed\n");
 		return false;
 	}
-	loader_log_line("goodix: ldoe9 supply on (3.224 V)\n");
+	loader_log_line("focaltech: ldoe9 supply on (3.224 V)\n");
 	return true;
 }
 
@@ -584,7 +444,7 @@ geni_spi_init(uint32_t hz)
 
 	char msg[64];
 	uint32_t mpos = 0;
-	append_str(msg, &mpos, "goodix: geni proto=");
+	append_str(msg, &mpos, "focaltech: geni proto=");
 	append_hex8(msg, &mpos, (uint8_t)proto);
 	msg[mpos++] = '\n';
 	msg[mpos] = '\0';
@@ -598,7 +458,7 @@ geni_spi_init(uint32_t hz)
 	}
 	fifo_depth = rd(SE_HW_PARAM_0) >> 16 & 0x3f;
 	mpos = 0;
-	append_str(msg, &mpos, "goodix: geni fifo=");
+	append_str(msg, &mpos, "focaltech: geni fifo=");
 	append_hex8(msg, &mpos, (uint8_t)fifo_depth);
 	msg[mpos++] = '\n';
 	msg[mpos] = '\0';
@@ -734,7 +594,7 @@ geni_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
 		}
 	}
 	if (complaints++ < 8) {
-		printf("goodix: SPI transfer of %u bytes failed: status %#x, sent %u, received %u\n", length, status, sent,
+		printf("focaltech: SPI transfer of %u bytes failed: status %#x, sent %u, received %u\n", length, status, sent,
 		    received);
 	}
 	geni_recover();
@@ -756,7 +616,7 @@ bitbang_init(void)
 
 	char pmsg[96];
 	uint32_t ppos = 0;
-	append_str(pmsg, &ppos, "goodix: bitbang_init in=");
+	append_str(pmsg, &ppos, "focaltech: bitbang_init in=");
 	append_hex8(pmsg, &ppos, (uint8_t)bitbang_in);
 	append_str(pmsg, &ppos, " out=");
 	append_hex8(pmsg, &ppos, (uint8_t)bitbang_out);
@@ -899,13 +759,13 @@ goodix_probe(bool verbose)
 	}
 	if (!goodix_checksum_ok(version, sizeof(version))) {
 		if (verbose) {
-			printf("goodix: no valid firmware version: %02x %02x %02x %02x %02x %02x %02x %02x ... %02x %02x\n",
+			printf("focaltech: no valid firmware version: %02x %02x %02x %02x %02x %02x %02x %02x ... %02x %02x\n",
 			    version[0], version[1], version[2], version[3], version[4], version[5], version[6], version[7],
 			    version[26], version[27]);
 		}
 		return false;
 	}
-	printf("goodix: chip \"%.6s\", firmware \"%.8s\" %02x.%02x.%02x.%02x, sensor %u\n", (const char *)version,
+	printf("focaltech: chip \"%.6s\", firmware \"%.8s\" %02x.%02x.%02x.%02x, sensor %u\n", (const char *)version,
 	    (const char *)version + 10, version[18], version[19], version[20], version[21], version[23]);
 
 	if (!goodix_read(GOODIX_IC_INFO, info, 2)) {
@@ -914,7 +774,7 @@ goodix_probe(bool verbose)
 	length = le16(info);
 	if (length < 40 || length >= GOODIX_MAX_READ || !goodix_read(GOODIX_IC_INFO, info, length) ||
 	    !goodix_checksum_ok(info, length)) {
-		printf("goodix: bad chip description (length %u)\n", length);
+		printf("focaltech: bad chip description (length %u)\n", length);
 		return false;
 	}
 	/* the length, the version (16 bytes), the features (10), four counts, then five lists of 16-bit numbers */
@@ -926,7 +786,7 @@ goodix_probe(bool verbose)
 		offset += 1 + 2u * info[offset];
 	}
 	if (offset + 48 + 2 > length) {
-		printf("goodix: chip description too short (%u, lists end at %u)\n", length, offset);
+		printf("focaltech: chip description too short (%u, lists end at %u)\n", length, offset);
 		return false;
 	}
 	touch_address = le32(info + offset + 44);
@@ -939,7 +799,7 @@ goodix_probe(bool verbose)
 			max_y = y;
 		}
 	}
-	printf("goodix: touch report at %#x, coordinates up to %u x %u\n", touch_address, max_x, max_y);
+	printf("focaltech: touch report at %#x, coordinates up to %u x %u\n", touch_address, max_x, max_y);
 	return touch_address != 0;
 }
 
@@ -1019,7 +879,7 @@ goodix_report(const uint8_t *touches, uint32_t count)
 		}
 		if (shown < 40) {
 			shown++;
-			printf("goodix: finger %u at %u, %u (of %u x %u)\n", id, x, y, max_x, max_y);
+			printf("focaltech: finger %u at %u, %u (of %u x %u)\n", id, x, y, max_x, max_y);
 		}
 		seen.touches++;
 		seen.last_x = x;
@@ -1075,14 +935,14 @@ goodix_poll(void)
 	if (!goodix_checksum_ok(report, 8)) {
 		seen.bad++;
 		if (bad++ < 8) {
-			printf("goodix: bad report header: %02x %02x %02x %02x %02x %02x %02x %02x\n", report[0], report[1],
+			printf("focaltech: bad report header: %02x %02x %02x %02x %02x %02x %02x %02x\n", report[0], report[1],
 			    report[2], report[3], report[4], report[5], report[6], report[7]);
 		}
 		return;
 	}
 	if (report[0] & GOODIX_STATUS_REQUEST) {
 		if ((report[2] & 0xf) == GOODIX_REQUEST_RESET || report[2] == GOODIX_REQUEST_RESET) {
-			printf("goodix: the chip asks to be reset\n");
+			printf("focaltech: the chip asks to be reset\n");
 			touch_reset();
 		}
 		return;
@@ -1093,7 +953,7 @@ goodix_poll(void)
 	if (count > GOODIX_MAX_TOUCHES || (count && !goodix_checksum_ok(report + 8, count * 8 + 2))) {
 		seen.bad++;
 		if (bad++ < 8) {
-			printf("goodix: bad report (%u touches)\n", count);
+			printf("focaltech: bad report (%u touches)\n", count);
 		}
 		return;
 	}
@@ -1664,14 +1524,14 @@ show_state(const char *when)
 static void
 power_on(void)
 {
-	loader_log_line("goodix: power_on start\n");
+	loader_log_line("focaltech: power_on start\n");
 	gpio_output(PIN_RESET, false, PULL_UP, 8);
 	gpio_configure(PIN_INT, 0, PULL_UP, 8, false);
 	io_supply_on();
 	sleep_ms(20);
 	gpio_set(PIN_RESET, true);
 	sleep_ms(100);
-	loader_log_line("goodix: power_on complete\n");
+	loader_log_line("focaltech: power_on complete\n");
 }
 
 static void
@@ -1702,35 +1562,35 @@ bring_up(void)
 		why = geni_spi_init(6000000);
 		if (!why) {
 			use_engine_pins();
-			loader_log_line("goodix: serial engine initialized, probing...\n");
+			loader_log_line("focaltech: serial engine initialized, probing...\n");
 			spi_transfer = geni_transfer;
 			if (chip_probe(true)) {
-				loader_log_line("goodix: chip answers through serial engine!\n");
+				loader_log_line("focaltech: chip answers through serial engine!\n");
 				return true;
 			}
-			loader_log_line("goodix: no answer through serial engine\n");
+			loader_log_line("focaltech: no answer through serial engine\n");
 		} else {
-			loader_log_line("goodix: cannot use serial engine: ");
+			loader_log_line("focaltech: cannot use serial engine: ");
 			loader_log_line(why);
 			loader_log_line("\n");
 		}
 	} else {
-		loader_log_line("goodix: se/gcc not ready or clocks_on failed\n");
+		loader_log_line("focaltech: se/gcc not ready or clocks_on failed\n");
 	}
 
 	/* Fall back to bitbang */
-	loader_log_line("goodix: falling back to bitbang\n");
+	loader_log_line("focaltech: falling back to bitbang\n");
 	spi_transfer = bitbang_transfer;
 	for (int attempt = 0; attempt < 2; attempt++) {
 		bitbang_in = attempt == 0 ? PIN_MISO : PIN_MOSI;
 		bitbang_out = attempt == 0 ? PIN_MOSI : PIN_MISO;
 		bitbang_init();
 		if (chip_probe(attempt == 0)) {
-			loader_log_line("goodix: chip answers on pins driven by hand\n");
+			loader_log_line("focaltech: chip answers on pins driven by hand\n");
 			return true;
 		}
 	}
-	loader_log_line("goodix: no answer from touch chip\n");
+	loader_log_line("focaltech: no answer from touch chip\n");
 	return false;
 }
 
@@ -1761,31 +1621,31 @@ goodix_thread(__unused void *parameter, __unused wait_result_t result)
 	}
 	idle_looks = 80000 / poll_us;   /* a report read every 80 ms even with the line high, in case it is missed */
 
-	loader_log_line("goodix: thread running, mapping tlmm\n");
+	loader_log_line("focaltech: thread running, mapping tlmm\n");
 	tlmm = ml_io_map(TLMM_PHYS, TLMM_SIZE);
 	if (!tlmm) {
-		loader_log_line("goodix: failed to map tlmm\n");
+		loader_log_line("focaltech: failed to map tlmm\n");
 		thread_terminate(current_thread());
 		return;
 	}
-	loader_log_line("goodix: tlmm mapped successfully\n");
+	loader_log_line("focaltech: tlmm mapped successfully\n");
 	gcc = ml_io_map(GCC_PHYS, GCC_SIZE);
 	se = ml_io_map(SE_PHYS, SE_SIZE);
 	rsc = ml_io_map(RSC_PHYS, RSC_SIZE);
 	cmd_db = ml_io_map_wcomb(CMD_DB_PHYS, CMD_DB_SIZE);
 	if (!rsc) {
-		loader_log_line("goodix: failed to map rsc\n");
+		loader_log_line("focaltech: failed to map rsc\n");
 	}
 	if (!cmd_db) {
-		loader_log_line("goodix: failed to map cmd_db\n");
+		loader_log_line("focaltech: failed to map cmd_db\n");
 	}
 
 	if (!bring_up()) {
-		loader_log_line("goodix: no touch screen detected\n");
+		loader_log_line("focaltech: no touch screen detected\n");
 		thread_terminate(current_thread());
 		return;
 	}
-	loader_log_line("goodix: touch screen ready\n");
+	loader_log_line("focaltech: touch screen ready\n");
 	{
 		uint32_t rate = 0;
 

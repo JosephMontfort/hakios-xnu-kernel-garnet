@@ -85,7 +85,7 @@ static int say(const char *format, ...) __printflike(1, 2);
 static int
 say(const char *format, ...)
 {
-	char line[300];
+	__attribute__((uninitialized)) char line[300];
 	va_list list;
 	int length;
 
@@ -144,8 +144,11 @@ wait_ms(uint32_t ms)
 #define CFG_PULL_UP             3
 #define CFG_OUTPUT              (1u << 9)
 
-#define PIN_SDA                 12      /* the serial engine's first pin is the data line, the second the clock */
-#define PIN_SCL                 13
+#define PIN_SDA                 pin_sda
+#define PIN_SCL                 pin_scl
+static unsigned pin_sda = 12;
+static unsigned pin_scl = 13;
+static bool is_garnet_speaker = false;
 
 static const struct {
 	unsigned pin;
@@ -156,15 +159,61 @@ static const struct {
 	{ 45, "the amplifier 0x34's interrupt" },
 };
 
+static const struct {
+	unsigned pin;
+	const char *what;
+} garnet_pins[] = {
+	{ 24, "I2C data (QUP0 SE2)" },
+	{ 25, "I2C clock (QUP0 SE2)" },
+	{ 43, "the amplifier 0x34's reset (GPIO43)" },
+	{ 106, "the amplifier 0x34's spksw (GPIO106)" },
+	{ 107, "the amplifier 0x34's interrupt (GPIO107)" },
+	{ 34, "the amplifier 0x35's reset (GPIO34)" },
+	{ 48, "the amplifier 0x35's interrupt (GPIO48)" },
+	{ 98, "Pri TDM bit clock (i2s0_sck)" },
+	{ 99, "Pri TDM word select (i2s0_ws)" },
+	{ 101, "Pri TDM data in (i2s0_data0)" },
+	{ 111, "Pri TDM data out (i2s0_data1)" },
+};
+
+static void
+garnet_speaker_reset_release(void)
+{
+	say("speaker: garnet: releasing amplifier reset lines (GPIO 43, GPIO 34) and enabling spksw (GPIO 106)\n");
+	/* Left PA Reset (GPIO 43) -> output HIGH */
+	wr(GPIO_IO(43), 2);
+	wr(GPIO_CFG(43), CFG_PULL_UP | CFG_OUTPUT);
+
+	/* Left PA SpkSw (GPIO 106) -> output HIGH */
+	wr(GPIO_IO(106), 2);
+	wr(GPIO_CFG(106), CFG_PULL_UP | CFG_OUTPUT);
+
+	/* Right PA Reset (GPIO 34) -> output HIGH */
+	wr(GPIO_IO(34), 2);
+	wr(GPIO_CFG(34), CFG_PULL_UP | CFG_OUTPUT);
+
+	spin_us(5000);
+}
+
 static void
 show_pins(void)
 {
-	for (unsigned i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
-		uint32_t cfg = rd(GPIO_CFG(pins[i].pin)), io = rd(GPIO_IO(pins[i].pin));
+	if (is_garnet_speaker) {
+		for (unsigned i = 0; i < sizeof(garnet_pins) / sizeof(garnet_pins[0]); i++) {
+			uint32_t cfg = rd(GPIO_CFG(garnet_pins[i].pin)), io = rd(GPIO_IO(garnet_pins[i].pin));
 
-		say("speaker: gpio%u (%s): function %u, pull %u, %u mA, %s, reads %u\n", pins[i].pin, pins[i].what,
-		    (cfg >> 2) & 15, cfg & 3, (((cfg >> 6) & 7) + 1) * 2, (cfg & CFG_OUTPUT) ? (io & 2 ? "drives high" : "drives low") :
-		    "input", io & 1);
+			say("speaker: gpio%u (%s): function %u, pull %u, %u mA, %s, reads %u\n", garnet_pins[i].pin, garnet_pins[i].what,
+			    (cfg >> 2) & 15, cfg & 3, (((cfg >> 6) & 7) + 1) * 2, (cfg & CFG_OUTPUT) ? (io & 2 ? "drives high" : "drives low") :
+			    "input", io & 1);
+		}
+	} else {
+		for (unsigned i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
+			uint32_t cfg = rd(GPIO_CFG(pins[i].pin)), io = rd(GPIO_IO(pins[i].pin));
+
+			say("speaker: gpio%u (%s): function %u, pull %u, %u mA, %s, reads %u\n", pins[i].pin, pins[i].what,
+			    (cfg >> 2) & 15, cfg & 3, (((cfg >> 6) & 7) + 1) * 2, (cfg & CFG_OUTPUT) ? (io & 2 ? "drives high" : "drives low") :
+			    "input", io & 1);
+		}
 	}
 }
 
@@ -734,11 +783,30 @@ faulty(struct amplifier *a, uint16_t *status)
 	return (*status & SYSST_FAULTS) != 0;
 }
 
+static bool
+detect_garnet_speaker(void)
+{
+	uint32_t val = 0;
+	if (PE_parse_boot_argn("garnet_speaker", &val, sizeof(val)) ||
+	    PE_parse_boot_argn("garnet_touch", &val, sizeof(val)) ||
+	    PE_parse_boot_argn("garnet_buttons", &val, sizeof(val)) ||
+	    PE_parse_boot_argn("speaker_garnet", &val, sizeof(val))) {
+		return true;
+	}
+	return false;
+}
+
 bool
 hakios_speaker_prepare(const uint8_t *acf, uint64_t size)
 {
 	if (tlmm == 0) {
 		tlmm = ml_io_map(TLMM_PHYS, TLMM_SIZE);
+	}
+	if (detect_garnet_speaker()) {
+		is_garnet_speaker = true;
+		pin_sda = 24;
+		pin_scl = 25;
+		garnet_speaker_reset_release();
 	}
 	broken = false;
 	say("speaker: the amplifiers are prepared as Android's driver prepares them; the I2C pins as found:\n");
@@ -1218,6 +1286,9 @@ probe_thread(__unused void *parameter, __unused wait_result_t result)
 	}
 	gcc = ml_io_map(GCC_PHYS, GCC_SIZE);
 	cmd_db = ml_io_map_wcomb(CMD_DB_PHYS, CMD_DB_SIZE);      /* memory, not registers: no alignment rules */
+	if (is_garnet_speaker) {
+		garnet_speaker_reset_release();
+	}
 	say("speaker: a look at the phone's sound hardware (level %u; nothing is switched on)\n", probe_level);
 	show_pins();
 	show_power();
@@ -1233,7 +1304,17 @@ hakios_speaker_init(void)
 {
 	thread_t thread;
 
-	if (!PE_parse_boot_argn("speaker_probe", &probe_level, sizeof(probe_level)) || probe_level == 0) {
+	is_garnet_speaker = detect_garnet_speaker();
+	if (is_garnet_speaker) {
+		pin_sda = 24;
+		pin_scl = 25;
+	}
+
+	if (!PE_parse_boot_argn("speaker_probe", &probe_level, sizeof(probe_level)) &&
+	    !PE_parse_boot_argn("garnet_speaker", &probe_level, sizeof(probe_level))) {
+		return;
+	}
+	if (probe_level == 0) {
 		return;
 	}
 	if (kernel_thread_start(probe_thread, NULL, &thread) == KERN_SUCCESS) {

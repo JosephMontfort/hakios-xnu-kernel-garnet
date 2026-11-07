@@ -36,7 +36,7 @@ void hakios_tl(const char *format, ...) __printflike(1, 2);
 void
 hakios_tl(const char *format, ...)
 {
-	char line[192];
+	__attribute__((uninitialized)) char line[192];
 	va_list list;
 
 	va_start(list, format);

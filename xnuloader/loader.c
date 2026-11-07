@@ -15,7 +15,9 @@
 /* ------------------------------------------------------------------------ */
 /* Fixed conventions shared with the boot shim, the packer and the kernel   */
 
-#define PAYLOAD_BASE        0xF0000000ULL
+#ifndef PAYLOAD_BASE
+#define PAYLOAD_BASE        0xF4000000ULL
+#endif
 #define PAYLOAD_MAGIC       0x50554E58u /* "XNUP" */
 
 struct payload_header { uint32_t magic; uint32_t size; };
@@ -86,7 +88,7 @@ static efi_system_table *ST;
 static efi_boot_services *BS;
 static efi_handle IMAGE;
 
-static char log_buf[16 * 1024 * 1024];
+static char log_buf[256 * 1024];
 static uint32_t log_len;
 
 void *
@@ -304,7 +306,7 @@ find_log_partition(void)
  * fetches over USB (fastboot get_staged).
  */
 /* aligned for any firmware's block I/O: U-Boot's wants a buffer aligned to the block size (media->io_align) */
-static char out_buf[16 * 1024 * 1024] __attribute__((aligned(0x2000)));
+static char out_buf[2 * 1024 * 1024] __attribute__((aligned(0x2000)));
 /* the storage's reads for the kernel land here (block_poll), and nothing else may be put in it */
 #define BLOCK_BUFFER_SIZE  (4u << 20)
 static uint8_t block_buffer[BLOCK_BUFFER_SIZE] __attribute__((aligned(0x2000)));
@@ -313,7 +315,7 @@ static uint8_t block_buffer[BLOCK_BUFFER_SIZE] __attribute__((aligned(0x2000)));
  * mailbox buffer, and a read-back landing in it while the kernel runs on the other core would
  * overwrite data the kernel is still copying out of it.
  */
-static uint8_t log_verify[4 * 1024 * 1024 + 8192] __attribute__((aligned(0x2000)));
+static uint8_t log_verify[2 * 1024 * 1024 + 8192] __attribute__((aligned(0x2000)));
 static const char *staged_data = out_buf;   /* what "upload" sends: normally the log in out_buf */
 static uint64_t staged_len;
 
@@ -2816,12 +2818,23 @@ choose_window(const struct payload_info *pi)
 		best_size = MAX_MEM_SIZE;
 	}
 	/* UEFI stays alive while the kernel runs, so the kernel must own all of its window. */
-	uint64_t claim = best_base;
-	efi_status s = BS->allocate_pages(AllocateAddress, EfiLoaderData, best_size >> 12, &claim);
-	print("phys window %x size %x, claim status %x\n", best_base, best_size, s);
-	if (EFI_ERROR(s)) {
-		return 0;
+	for (uint64_t off = 0; off < map_size; off += desc_size) {
+		efi_memory_descriptor *d = (efi_memory_descriptor *)(map_buf + off);
+		if (d->type != EfiConventionalMemory) {
+			continue;
+		}
+		uint64_t d_start = d->phys_start;
+		uint64_t d_end = d->phys_start + (d->pages << 12);
+		if (d_start < best_base) d_start = best_base;
+		if (d_end > best_base + best_size) d_end = best_base + best_size;
+		if (d_end > d_start) {
+			uint64_t c_addr = d_start;
+			uint64_t c_pages = (d_end - d_start) >> 12;
+			efi_status cs = BS->allocate_pages(AllocateAddress, EfiLoaderData, c_pages, &c_addr);
+			print("claim conventional %x (%d MB): status %x\n", d_start, (uint64_t)(c_pages >> 8), cs);
+		}
 	}
+	print("phys window %x size %x\n", best_base, best_size);
 	win_base = best_base;
 	win_size = best_size;
 	return 1;

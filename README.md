@@ -67,7 +67,7 @@ fastboot boot garnet-boot.img
 ### Garnet Community & Support
 - **Updates Channel:** [t.me/garnetglobal](https://t.me/garnetglobal)
 - **Support Group:** [t.me/Garnet_Axion_Support](https://t.me/Garnet_Axion_Support)
-- **Port Maintainer:** **Montfort**
+- **Port Maintainers:** **Montfort**, [Jotan](https://github.com/sudo-joaopuser)
 
 ## What you bring, and what is never here
 
@@ -91,10 +91,22 @@ HakiOS is an independent research project. It is **not affiliated with or endors
 named only to describe what the code works with. If you believe a file here infringes anyone's rights, open an issue and it will be
 removed.
 
-## Team
+## Team & Credits
 
-hakios is an experimental project focused on bringing darwin to android hardware. our goal is to make hakios free and accessible to everyone.
+HakiOS is an experimental project focused on bringing Darwin to Android hardware. Our goal is to make HakiOS free and accessible to everyone.
 
-@oodze - founder, @netusd - advertising / ceo-dev, @wannqn - dev, @hxfuxyyXD - dev, Rhaenja Hun（杭润嘉） - developer / sponsor
+### Original Upstream Project
+- @oodze - founder
+- @netusd - advertising / ceo-dev
+- @wannqn - dev
+- @hxfuxyyXD - dev
+- Rhaenja Hun（杭润嘉） - developer / sponsor
+- Special thanks to Project Mu / Silicium for UEFI platform sources.
 
-tym sicilium for the sources!
+### Maintainers (POCO X6 5G Port)
+- **Montfort**
+- [Jotan](https://github.com/sudo-joaopuser)
+
+### Community & Support
+- **Updates Channel:** [t.me/garnetglobal](https://t.me/garnetglobal)
+- **Support Group:** [t.me/Garnet_Axion_Support](https://t.me/Garnet_Axion_Support)

@@ -54,6 +54,7 @@ int hakios_battery_temperature(void);  /* the battery's temperature in C, -273 w
 /* one transfer at a time through the PMIC arbiter for this system (drivers/input/hakios.buttons.c) */
 void hakios_spmi_lock(void);
 void hakios_spmi_unlock(void);
+bool garnet_enable_touch_vddio(void);
 /*
  * How the battery is, as the audio DSP's battery manager says (drivers/audio/hakios.adsp.c, with adsp=1):
  * handed to drivers/power/hakios.battery.c, which keeps it for the sysctls kern.hakios.battery_* and
