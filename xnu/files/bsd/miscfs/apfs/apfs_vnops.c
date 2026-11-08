@@ -770,12 +770,14 @@ apfs_vnop_pagein(struct vnop_pagein_args *ap)
 	for (at = offset; at < end;) {
 		uint8_t *dst = (uint8_t *)address + upl_offset + (at - offset);
 		size_t want, got = 0;
+		size_t upl_avail;
 
 		if ((uint64_t)at >= size) {
 			bzero(dst, (size_t)(end - at));         /* past the end of the file */
 			break;
 		}
-		want = (size_t)MIN(end - at, (off_t)(size - (uint64_t)at));
+		upl_avail = (size_t)(end - at);
+		want = (size_t)MIN((off_t)upl_avail, (off_t)(size - (uint64_t)at));
 		os_atomic_inc(&am->am_nx.requests, relaxed);
 		apfs_lock(am);
 		if (at == offset) {

@@ -3629,7 +3629,7 @@ read_cfile_rsrc(struct apfs_vol *vol, const struct apfs_inode *ino,
 	if (cf->piece_count == 0 || cf->piece_off == NULL) {
 		return EIO;
 	}
-	if (off >= cf->size) {
+	if (off >= cf->size || len == 0) {
 		return 0;
 	}
 	if (len > cf->size - off) {
@@ -3654,13 +3654,18 @@ read_cfile_rsrc(struct apfs_vol *vol, const struct apfs_inode *ino,
 		    i >= cf->ra_first && i - cf->ra_first < cf->ra_count &&
 		    cf->ra_len[i - cf->ra_first] == want) {
 			/* read ahead by an earlier request of this reader's */
+			if (*out >= len) {
+				break;
+			}
 			n = want - from_in_piece;
 			if (n > len - *out) {
 				n = len - *out;
 			}
-			memcpy(buf + *out, cf->ra_data +
-			    (size_t)(i - cf->ra_first) * APFS_DECMPFS_BLOCK_SIZE + from_in_piece, n);
-			*out += n;
+			if (n > 0) {
+				memcpy(buf + *out, cf->ra_data +
+				    (size_t)(i - cf->ra_first) * APFS_DECMPFS_BLOCK_SIZE + from_in_piece, n);
+				*out += n;
+			}
 			vol->nx->ra_hits++;
 			continue;
 		}
@@ -3903,12 +3908,17 @@ read_cfile_rsrc(struct apfs_vol *vol, const struct apfs_inode *ino,
 			}
 			cf->held = i;
 		}
+		if (*out >= len) {
+			break;
+		}
 		n = cf->held_len - from_in_piece;
 		if (n > len - *out) {
 			n = len - *out;
 		}
-		memcpy(buf + *out, cf->held_data + from_in_piece, n);
-		*out += n;
+		if (n > 0) {
+			memcpy(buf + *out, cf->held_data + from_in_piece, n);
+			*out += n;
+		}
 	}
 	if (nbatch > 0) {
 		error = batch_run(vol, sc, nbatch);
