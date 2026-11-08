@@ -2719,6 +2719,7 @@ static struct {
 	uint32_t width, height, stride;
 } SCREEN;
 static uint64_t win_base, win_size; /* XNU's physical memory window, claimed once */
+static int is_12gb;                 /* Garnet 12GB RAM variant detected from UEFI memory map */
 static uint64_t resident_rd_size;   /* root image kept at win_base + RESIDENT_RD_OFFSET, 0 if none */
 static char last_result[64] = "idle";
 
@@ -2777,6 +2778,7 @@ choose_window(const struct payload_info *pi)
 	uint32_t desc_ver;
 	uint64_t best_base = 0, best_size = 0;
 	uint64_t pay_lo = PAYLOAD_BASE, pay_hi = PAYLOAD_BASE + PAYLOAD_MAX_SIZE;
+	uint64_t max_ram_hi = 0;
 
 	if (win_size != 0) {
 		return 1;
@@ -2791,6 +2793,9 @@ choose_window(const struct payload_info *pi)
 			continue;
 		}
 		uint64_t lo = d->phys_start, hi = d->phys_start + (d->pages << 12);
+		if (hi > max_ram_hi) {
+			max_ram_hi = hi;
+		}
 		/* the payload sits in RAM that UEFI may consider free: stay clear of it */
 		if (lo < pay_hi && hi > pay_lo) {
 			if (pay_lo - lo > hi - pay_hi && pay_lo > lo) {
@@ -2810,6 +2815,10 @@ choose_window(const struct payload_info *pi)
 	if (PLAT == &platform_garnet || PLAT == &platform_redwood) {
 		best_base = 0x840000000ULL;
 		best_size = 0x140000000ULL;
+		if (PLAT == &platform_garnet) {
+			is_12gb = (max_ram_hi > 0x980000000ULL);
+			print("garnet: detected %s RAM (max conventional PA %x)\n", is_12gb ? "12GB" : "8GB", max_ram_hi);
+		}
 	} else if (pi->forced_base != 0) {
 		best_base = pi->forced_base;
 		best_size = MAX_MEM_SIZE;
@@ -3200,6 +3209,20 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 			ba->commandLine[n++] = hex[(address >> shift) & 0xf];
 		}
 		if (n < BOOT_LINE_LENGTH - 1) ba->commandLine[n++] = ' ';
+	}
+	if (PLAT == &platform_garnet) {
+		/* Allow explicit manual override from payload cmdline */
+		for (const char *c = pi.cmdline; *c; c++) {
+			if (starts_with(c, "garnet_12gb=1") || starts_with(c, "garnet_ram=12")) {
+				is_12gb = 1;
+			} else if (starts_with(c, "garnet_12gb=0") || starts_with(c, "garnet_ram=8")) {
+				is_12gb = 0;
+			}
+		}
+		const char *ram_flag = is_12gb ? "garnet_12gb=1 garnet_ram=12 " : "garnet_12gb=0 garnet_ram=8 ";
+		for (const char *c = ram_flag; *c && n < BOOT_LINE_LENGTH - 1; c++) {
+			ba->commandLine[n++] = *c;
+		}
 	}
 	if ((PLAT == &platform_garnet || PLAT == &platform_redwood) && rd1_size != 0) {
 		static const char prefix[] = "garnet_root_end=0x";
