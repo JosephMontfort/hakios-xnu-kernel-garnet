@@ -44,7 +44,23 @@ if ($env:PLATFORM_TOOLS -and (Test-Path $env:PLATFORM_TOOLS)) {
         $env:PATH = "$env:PLATFORM_TOOLS$sep$env:PATH"
     }
 }
-$script:K = if ($env:XL_KERNEL) { $env:XL_KERNEL } else { 'prebuilt/mach.development.bcm2837' }
+$candidates = @(
+    $env:XL_KERNEL,
+    'prebuilt/mach.development.bcm2837',
+    'prebuilt/hakios-kernel',
+    'mach.development.bcm2837',
+    'hakios-kernel'
+)
+$script:K = $null
+foreach ($c in $candidates) {
+    if ($c -and (Test-Path $c)) {
+        $script:K = $c
+        break
+    }
+}
+if (-not $script:K) {
+    $script:K = 'prebuilt/mach.development.bcm2837'
+}
 $script:L = if (Test-Path 'xnuloader/loader.efi') { 'xnuloader/loader.efi' } else { 'prebuilt/loader.efi' }
 New-Item -ItemType Directory -Force -Path 'logs' | Out-Null
 $script:PhoneBase = Join-Path $env:TEMP 'hackios-phone'

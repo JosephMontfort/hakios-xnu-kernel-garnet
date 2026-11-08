@@ -170,6 +170,7 @@ jobs:
           # 2. Freshly compiled kernel & freestanding loader (guaranteed to overwrite any stale prebuilt)
           cp "$K" dist/mach.development.bcm2837
           cp "$K" dist/payload/prebuilt/mach.development.bcm2837
+          ln -sf mach.development.bcm2837 dist/payload/prebuilt/hakios-kernel
           if [ -f "${K}.unstripped" ]; then
             cp "${K}.unstripped" dist/mach.development.bcm2837.unstripped
           fi
@@ -267,10 +268,12 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          name: "HakiOS for POCO X6 5G (garnet)"
+          body: "Initial release"
           files: |
             dist/${{ env.ARCHIVE_NAME }}
             dist/mach.development.bcm2837
             dist/loader.efi
           draft: false
           prerelease: false
-          generate_release_notes: true
+          generate_release_notes: false
