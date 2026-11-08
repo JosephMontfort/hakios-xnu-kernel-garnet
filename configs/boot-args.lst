@@ -108,9 +108,11 @@ fbsubtype	k
 fbtrace	k
 fbwidth	ku
 gamut	l
+garnet_12gb	kl
 garnet_buttons	k
 garnet_cpufreq	k
 garnet_gpu	k
+garnet_ram	kl
 garnet_root_end	k
 garnet_speaker	k
 garnet_touch	k

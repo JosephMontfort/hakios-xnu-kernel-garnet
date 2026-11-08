@@ -99,9 +99,11 @@ FBSUBTYPE	arg	fbsubtype	GPU and display	k	MiniIOMobileFramebuffer.cpp
 FBTRACE	arg	fbtrace	GPU and display	k	MiniIOMobileFramebuffer.cpp	log the first N calls of every selector (default 3)
 FBWIDTH	arg	fbwidth	GPU and display	ku	MiniIOMobileFramebuffer.cpp,inject_sb.c	
 GAMUT	arg	gamut	Loader	l	loader.c	
+GARNET_12GB	arg	garnet_12gb	CPU, memory and boot	kl	(patch),loader.c	
 GARNET_BUTTONS	arg	garnet_buttons	Audio and battery	k	hakios.buttons.c,hakios.cpufreq.c,hakios.speaker.c	
 GARNET_CPUFREQ	arg	garnet_cpufreq	CPU, memory and boot	k	hakios.cpufreq.c	
 GARNET_GPU	arg	garnet_gpu	CPU, memory and boot	k	hakios.adreno710.c,hakios.cpufreq.c	
+GARNET_RAM	arg	garnet_ram	CPU, memory and boot	kl	(patch),loader.c	
 GARNET_ROOT_END	arg	garnet_root_end	CPU, memory and boot	k	(patch)	
 GARNET_SPEAKER	arg	garnet_speaker	Audio and battery	k	hakios.speaker.c	
 GARNET_TOUCH	arg	garnet_touch	Audio and battery	k	hakios.buttons.c,hakios.cpufreq.c,hakios.focaltech.c,hakios.speaker.c	
