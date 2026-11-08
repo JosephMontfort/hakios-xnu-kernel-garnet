@@ -77,18 +77,35 @@ jobs:
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
 
       - name: Install Theos Toolchain & iOS SDK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p "$HOME/theos/toolchain"
           echo "Fetching iOS LLVM cross toolchain..."
+          downloaded=false
           for attempt in 1 2 3 4 5; do
-            if curl -fL --retry 3 https://github.com/L1ghtmann/llvm-project/releases/latest/download/iOSToolchain-x86_64.tar.xz -o /tmp/toolchain.tar.xz && tar -xJf /tmp/toolchain.tar.xz -C "$HOME/theos/toolchain"; then
-              rm -f /tmp/toolchain.tar.xz
-              break
+            echo "Attempt $attempt to fetch toolchain..."
+            if gh release download test-210562a -R L1ghtmann/llvm-project -p "iOSToolchain-x86_64.tar.xz" --dir /tmp && [ -f /tmp/iOSToolchain-x86_64.tar.xz ]; then
+              if tar -xJf /tmp/iOSToolchain-x86_64.tar.xz -C "$HOME/theos/toolchain"; then
+                rm -f /tmp/iOSToolchain-x86_64.tar.xz
+                downloaded=true
+                break
+              fi
+            elif curl -sSL --retry 3 --retry-connrefused https://github.com/L1ghtmann/llvm-project/releases/download/test-210562a/iOSToolchain-x86_64.tar.xz -o /tmp/toolchain.tar.xz && [ -f /tmp/toolchain.tar.xz ]; then
+              if tar -xJf /tmp/toolchain.tar.xz -C "$HOME/theos/toolchain"; then
+                rm -f /tmp/toolchain.tar.xz
+                downloaded=true
+                break
+              fi
             fi
-            echo "Retrying toolchain download in 5s (attempt $attempt)..."
-            rm -f /tmp/toolchain.tar.xz
+            rm -f /tmp/toolchain.tar.xz /tmp/iOSToolchain-x86_64.tar.xz
+            echo "Retrying in 5s..."
             sleep 5
           done
+          if [ "$downloaded" != "true" ]; then
+            echo "Failed to download toolchain after 5 attempts"
+            exit 1
+          fi
           echo "Fetching Theos iOS SDKs..."
           for attempt in 1 2 3; do
             if git clone --depth 1 https://github.com/theos/sdks.git "$HOME/theos/sdks"; then
