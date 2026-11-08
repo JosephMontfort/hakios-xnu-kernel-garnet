@@ -3567,7 +3567,7 @@ diff --git a/osfmk/vm/vm_resident.c b/osfmk/vm/vm_resident.c
 index 0aab8cc..e727c72 100644
 --- a/osfmk/vm/vm_resident.c
 +++ b/osfmk/vm/vm_resident.c
-@@ -1391,6 +1391,50 @@ uint64_t secluded_shutoff_headroom = 150 * 1024 * 1024; /* original value from N
+@@ -1391,6 +1391,52 @@ uint64_t secluded_shutoff_headroom = 150 * 1024 * 1024; /* original value from N
  #if defined(__arm64__)
  extern void patch_low_glo_vm_page_info(void *, void *, uint32_t);
  unsigned int vm_first_phys_ppnum = 0;
@@ -3620,7 +3620,7 @@ index 0aab8cc..e727c72 100644
  #endif
  
  void vm_page_release_startup(vm_page_t mem);
-@@ -1405,6 +1449,23 @@ pmap_startup(
+@@ -1405,6 +1451,23 @@ pmap_startup(
  	uint64_t        start_ns;
  	uint64_t        now_ns;
  	uint_t          low_page_count = 0;
@@ -3644,7 +3644,7 @@ index 0aab8cc..e727c72 100644
  
  #if    defined(__LP64__)
  	/*
-@@ -1567,19 +1628,38 @@ pmap_startup(
+@@ -1567,19 +1630,38 @@ pmap_startup(
  #endif
  		++vm_pages_count;
  		vm_page_init(&vm_pages[i], phys_page, FALSE);
@@ -3683,7 +3683,7 @@ index 0aab8cc..e727c72 100644
  			}
  		} while (i != 0);
  	}
-@@ -1587,6 +1667,12 @@ pmap_startup(
+@@ -1587,6 +1669,13 @@ pmap_startup(
  	absolutetime_to_nanoseconds(mach_absolute_time(), &now_ns);
  	printf("pmap_startup() init/release time: %lld microsec\n", (now_ns - start_ns) / NSEC_PER_USEC);
  	printf("pmap_startup() delayed init/release of %d pages\n", vm_delayed_count);
