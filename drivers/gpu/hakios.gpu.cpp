@@ -70,6 +70,7 @@ uint32_t hakios_gpu_last(void);
 void hakios_gpu_worked(uint64_t * microseconds, uint32_t * submissions, uint32_t by[7]);
 void hakios_gpu_report(const char * why);
 void hakios_gpu_stop(void);
+bool hakios_gpu_recover(void);
 
 void HakiosGPUStart(void);
 void HakiosGPUStop(void);
@@ -222,9 +223,15 @@ gpuWait(uint32_t fence, uint64_t milliseconds)
 		delay_for_interval(GPU_ASK_AGAIN_US, NSEC_PER_USEC);
 		IOLockLock(gGPULock);
 	}
-	if (milliseconds >= 1000 && !gGPUReported) {
-		gGPUReported = true;
-		hakios_gpu_report("no answer");
+	if (milliseconds >= 1000) {
+		if (!gGPUReported) {
+			hakios_gpu_report("no answer");
+		}
+		if (hakios_gpu_recover()) {
+			gGPUReported = false;
+		} else {
+			gGPUReported = true;
+		}
 	}
 	return false;
 }
@@ -1160,9 +1167,15 @@ HakiosGPUUserClient::submit(struct msm_gem_submit * request)
 		}
 	}
 	reap();
-	if (request->fence == 0 && !gGPUReported) {
-		gGPUReported = true;
-		hakios_gpu_report("the ring is full");
+	if (request->fence == 0) {
+		if (!gGPUReported) {
+			hakios_gpu_report("the ring is full");
+		}
+		if (hakios_gpu_recover()) {
+			gGPUReported = false;
+		} else {
+			gGPUReported = true;
+		}
 	}
 	if (fSubmits++ < 4) {
 		/* (addresses and words are only set up to `count`: with no command buffer among the commands, the first would be stack garbage) */

@@ -124,6 +124,7 @@ uint32_t hakios_gpu_last(void);
 void hakios_gpu_worked(uint64_t *microseconds, uint32_t *submissions, uint32_t by[7]);
 void hakios_gpu_report(const char *why);
 void hakios_gpu_stop(void);
+bool hakios_gpu_recover(void);
 #endif
 
 #endif /* _SYS_HAKIOS_INPUT_H_ */

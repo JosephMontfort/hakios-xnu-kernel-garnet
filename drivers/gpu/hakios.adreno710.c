@@ -4181,10 +4181,12 @@ hakios_gpu_parameter(uint32_t which, uint64_t *value)
 	case 0x01:                              /* GPU_ID: none, the chip ID says it */
 	case 0x06:                              /* GMEM_BASE */
 	case 0x08:                              /* PP_PGTABLE */
-	case 0x09:                              /* FAULTS */
 	case 0x0a:                              /* SUSPENDS */
 	case 0x11:                              /* RAYTRACING */
 		*value = 0;
+		return true;
+	case 0x09:                              /* FAULTS */
+		*value = gpu_recoveries;
 		return true;
 	case 0x02:                              /* GMEM_SIZE */
 		*value = 512 * 1024;

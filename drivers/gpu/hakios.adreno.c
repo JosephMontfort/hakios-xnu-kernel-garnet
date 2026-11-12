@@ -3525,6 +3525,12 @@ hakios_gpu_report(const char *why)
 	}
 }
 
+bool
+hakios_gpu_recover(void)
+{
+	return false;
+}
+
 /* ---- all of it together ---------------------------------------------------------------------------- */
 
 static bool(*const steps[])(void) = {
