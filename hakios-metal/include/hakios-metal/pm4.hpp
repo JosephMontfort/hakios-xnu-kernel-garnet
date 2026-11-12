@@ -60,6 +60,16 @@ struct Header {
 
 Header decode(uint32_t word);
 
+// The A7xx moved a set of the A6xx's registers (Mesa 25.0.7 a6xx.xml: the variants="A6XX" / "A7XX-" pairs) and dropped
+// others. The emitters here are written with the A6xx's offsets; when the GPU is an A7xx (setA7xx, from the chip id at
+// open) every type-4 write is translated: a moved register goes to its A7xx offset (same field layout, checked one by
+// one against the XML), an A6xx-only one is left out. a7xxRegister answers kDropRegister for those. The A7xx offsets
+// are none of them A6xx sources, so translating twice (appendDeduped re-emits a written stream) changes nothing.
+constexpr uint32_t kDropRegister = 0xffffffffu;
+uint32_t a7xxRegister(uint32_t reg);
+void setA7xx(bool on);
+bool isA7xx();
+
 // A stream of packets being written. Addresses are the GPU's (the IOVA of a buffer plus an offset).
 class Stream {
 public:
@@ -79,6 +89,7 @@ public:
     void clear() { words_.clear(); }
 
 private:
+    void put(uint32_t reg, const uint32_t* values, uint32_t count);
     void command(uint32_t opcode, uint32_t count);
     void address(uint64_t a) {
         words_.push_back(uint32_t(a));

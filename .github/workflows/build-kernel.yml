@@ -146,57 +146,106 @@ jobs:
             exit 1
           fi
 
-      - name: Compile Userland Dynamic Libraries & Drivers
+      - name: Build Mesa 25.0.7 for iOS (Adreno 710, AIR front end)
+        run: |
+          source xnu-env.sh
+          # the tools tools/mk-mesa.sh calls by name
+          for tool in llvm-ar llvm-ranlib llvm-strip llvm-nm; do
+            if ! command -v $tool >/dev/null 2>&1; then
+              src=$(ls /usr/bin/${tool}-* 2>/dev/null | sort -V | tail -n1)
+              [ -n "$src" ] && sudo ln -sf "$src" /usr/local/bin/$tool
+            fi
+          done
+          if ! command -v install_name_tool >/dev/null 2>&1; then
+            if [ -x "$THEOS/toolchain/linux/iphone/bin/install_name_tool" ]; then
+              sudo ln -sf "$THEOS/toolchain/linux/iphone/bin/install_name_tool" /usr/local/bin/install_name_tool
+            else
+              src=$(ls /usr/bin/llvm-install-name-tool* 2>/dev/null | sort -V | tail -n1)
+              [ -n "$src" ] && sudo ln -sf "$src" /usr/local/bin/install_name_tool
+            fi
+          fi
+          [ -e "$XNUDEPS/host/bin/xnu-clang++" ] || ln -sf xnu-clang "$XNUDEPS/host/bin/xnu-clang++"
+          mkdir -p xnu-deps/build/mesa
+          MESA_TAR=xnu-deps/build/mesa/mesa-25.0.7.tar.xz
+          [ -f "$MESA_TAR" ] || curl -fSL --retry 3 -o "$MESA_TAR" https://archive.mesa3d.org/mesa-25.0.7.tar.xz
+          echo "592272df3cf01e85e7db300c449df5061092574d099da275d19e97ef0510f8a6  $MESA_TAR" | sha256sum -c
+          if ! DRIVERS=softpipe,freedreno AIR=1 bash tools/mk-mesa.sh; then
+            echo "::error::tools/mk-mesa.sh failed"
+            for f in xnu-deps/build/mesa/meson-setup.log xnu-deps/build/mesa/ninja.log \
+                     xnu-deps/build/mesa/build-softpipe-freedreno/meson-logs/meson-log.txt; do
+              [ -f "$f" ] && { echo "=== $f"; tail -n 120 "$f"; }
+            done
+            exit 1
+          fi
+          B=xnu-deps/build/mesa/build-softpipe-freedreno
+          # hakios-metal links the AIR front end and ir3 from this build (tools/compiler.mk)
+          [ -f $B/src/compiler/air/libair.a ] || ninja -C $B src/compiler/air/libair.a
+          ls -l xnu-deps/build/mesa/out/ $B/src/compiler/air/libair.a
+
+      - name: Build hakios-metal (A7xx) and the Metal plug-in
         run: |
           source xnu-env.sh
           SDK="$THEOS/sdks/iPhoneOS16.5.sdk"
-          FRAMEWORKS="-F $SDK/System/Library/Frameworks"
+          # the driver library with its compiler (ir3 for the chip the kernel names: 0x07010000 on garnet)
+          make -C hakios-metal ios MESA=1 HAKIOS="$PWD" -j"$(nproc)"
+          llvm-nm -g hakios-metal/out/ios/libhakios-metal.a | grep -q ' U _air_' || {
+            echo "::error::libhakios-metal.a was built without its compiler (MESA=1)"; exit 1; }
+          # the plug-in: userland/src/HakiosMetalCA.m over it, linked as userland/build.sh METAL_PLUGIN=ca links it,
+          # with RedwoodMetalDevice (the kernel's default MetalPluginClassName) as an alias of its device class
+          MB=xnu-deps/build/mesa/build-softpipe-freedreno
+          MESA_LIBS=""
+          for a in src/compiler/air/libair.a src/freedreno/ir3/libfreedreno_ir3.a src/freedreno/isa/libir3encode.a \
+              src/freedreno/isa/libir3decode.a src/compiler/isaspec/libisaspec.a src/compiler/nir/libnir.a \
+              src/compiler/libcompiler.a src/freedreno/fdl/libfreedreno_layout.a \
+              src/freedreno/common/libfreedreno_common.a src/util/libmesa_util.a src/util/libmesa_util_sse41.a \
+              src/util/blake3/libblake3.a src/c11/impl/libmesa_util_c11.a; do
+            [ -f "$MB/$a" ] && MESA_LIBS="$MESA_LIBS $MB/$a"
+          done
+          mkdir -p out/metal
+          xnu-clang -arch arm64 -isysroot "$SDK" -O1 -bundle \
+            -framework Foundation -framework IOKit -framework IOSurface -framework Metal -lobjc \
+            -DHAKIOS_METAL_GPU -Ihakios-metal/include \
+            -o out/metal/RedwoodMetal userland/src/HakiosMetalCA.m userland/src/HakiosMetalAlias.m \
+            hakios-metal/out/ios/libhakios-metal.a $MESA_LIBS -lc++ -lz -lm
+          llvm-nm out/metal/RedwoodMetal | grep -E 'OBJC_CLASS_\$_(HakiosMetalDevice|RedwoodMetalDevice)$'
+          [ "$(llvm-nm out/metal/RedwoodMetal | grep -E '_OBJC_CLASS_\$_(HakiosMetalDevice|RedwoodMetalDevice)$' | grep -vc ' U ')" = 2 ] || {
+            echo "::error::the plug-in does not define both HakiosMetalDevice and RedwoodMetalDevice"; exit 1; }
+          ls -l out/metal/RedwoodMetal
 
-          cd userland
-          mkdir -p obj
-
-          # 1. HakiosMetal bundle
-          xnu-clang -arch arm64 -isysroot "$SDK" $FRAMEWORKS -O1 \
-            -bundle -framework Foundation -framework Metal -lobjc \
-            -Isrc -o obj/HakiosMetal src/HakiosMetal.m src/hakios_metallib.c || true
-          if [ -f obj/HakiosMetal ]; then
-            mkdir -p obj/HakiosMetal.bundle
-            cp obj/HakiosMetal obj/HakiosMetal.bundle/
-            cp src/HakiosMetal.plist obj/HakiosMetal.bundle/Info.plist
-          fi
-
-          # 2. Injected daemons (backboardd & SpringBoard)
-          xnu-clang -arch arm64 -isysroot "$SDK" $FRAMEWORKS -O2 \
-            -dynamiclib -install_name /redwood/lib/libredwood.dylib \
-            -framework CoreFoundation -framework IOKit -framework IOSurface -lobjc \
-            -o obj/libredwood.dylib src/inject.c
-
-          xnu-clang -arch arm64 -isysroot "$SDK" $FRAMEWORKS -O2 \
-            -dynamiclib -install_name /redwood/lib/libredwood-sb.dylib \
-            -framework CoreFoundation -framework IOKit -framework CoreGraphics -framework IOSurface -lobjc \
-            -o obj/libredwood-sb.dylib src/inject_sb.c
-
-          # 3. Sleep daemon stub
-          xnu-clang -arch arm64 -isysroot "$SDK" $FRAMEWORKS -O2 \
-            -o obj/sleepd_stub src/sleepd_stub.c
-          cd ..
+      - name: Assemble root.apfs (device image + this build's Metal plug-in and Mesa)
+        run: |
+          BASE=devices/garnet/userland/root.apfs
+          test -f "$BASE"
+          mkdir -p out/root
+          bash tools/garnet-root-apfs.sh "$BASE" out/root/root.apfs \
+            --plugin out/metal/RedwoodMetal \
+            --plugin-plist userland/src/RedwoodMetal-garnet.plist \
+            --osmesa xnu-deps/build/mesa/out/libOSMesa.8.dylib \
+            --manifest out/root/root.apfs.manifest
+          # an APFS container the kernel's reader takes: the superblock's magic, one volume, every checksum good
+          python3 tools/apfs/apfs.py info out/root/root.apfs
+          python3 - <<'EOF'
+          import struct
+          b = open("out/root/root.apfs", "rb").read(4096)
+          assert b[32:36] == b"NXSB", "no NXSB container superblock"
+          print("root.apfs: NXSB, block size", struct.unpack_from("<I", b, 36)[0])
+          EOF
+          python3 tools/apfs/apfs.py ls out/root/root.apfs /lib/RedwoodMetal.bundle
 
       - name: Package Distributable Garnet Release
         run: |
           mkdir -p dist/payload/userland dist/payload/prebuilt
           K="xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837"
 
-          # 1. Base prebuilts from device tree (firmware, splash, dtb, etc.)
+          # 1. Base prebuilts from device tree (UEFI, splash, dtb, BootShim) -- never its kernel, loader, image or root.apfs
           if [ -d devices/garnet/prebuilt ]; then
-            cp -a devices/garnet/prebuilt/. dist/payload/prebuilt/ || true
-            rm -f dist/payload/prebuilt/garnet-boot.img dist/payload/prebuilt/root.apfs
-            if [ -f devices/garnet/prebuilt/root.apfs ]; then
-              cp devices/garnet/prebuilt/root.apfs dist/payload/userland/root.apfs
-            fi
+            cp -a devices/garnet/prebuilt/. dist/payload/prebuilt/
           fi
-          if [ -f devices/garnet/userland/root.apfs ]; then
-            cp devices/garnet/userland/root.apfs dist/payload/userland/root.apfs
-          fi
+          rm -f dist/payload/prebuilt/garnet-boot.img dist/payload/prebuilt/root.apfs \
+                dist/payload/prebuilt/loader.efi dist/payload/prebuilt/mach.development.bcm2837 dist/payload/prebuilt/hakios-kernel
+          # root.apfs: the one this run assembled (device image + this build's Metal plug-in and libOSMesa)
+          cp out/root/root.apfs dist/payload/userland/root.apfs
+          cp out/root/root.apfs.manifest dist/payload/userland/root.apfs.manifest
 
           # 2. Freshly compiled kernel & freestanding loader (guaranteed to overwrite any stale prebuilt)
           cp "$K" dist/mach.development.bcm2837
@@ -250,6 +299,19 @@ jobs:
             echo "Download and put the system.apfs inside this directory." > "dist/payload/userland/put system.apfs here.txt"
           fi
 
+          # what this run built, and from what
+          {
+            echo "HakiOS garnet build"
+            echo "kernel repo : ${GITHUB_REPOSITORY}@${GITHUB_SHA}"
+            echo "device repo : $(git -C devices/garnet rev-parse HEAD 2>/dev/null || echo unknown)"
+            echo "run         : ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "built       : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo
+            echo "md5 of every file in this package:"
+            (cd dist/payload && find . -type f ! -name BUILD-INFO.txt | LC_ALL=C sort | xargs md5sum)
+          } > dist/payload/BUILD-INFO.txt
+          cat dist/payload/BUILD-INFO.txt
+
           # Generate clean release README
           python3 -c "
           readme = '''HakiOS for POCO X6 5G (garnet / SM7435-AB)
@@ -264,7 +326,10 @@ jobs:
           - prebuilt/loader.efi               : Standalone resident XNU loader
           - prebuilt/device-tree.dtb          : Garnet hardware device tree
           - prebuilt/SILICIUM_UEFI.fd         : Silicium UEFI payload
-          - userland/root.apfs                : Root filesystem (drivers & LaunchDaemons)
+          - userland/root.apfs                : Root filesystem, rebuilt by this run (Metal plug-in, Mesa, LaunchDaemons)
+          - userland/root.apfs.manifest       : Its file list with md5s
+          - BUILD-INFO.txt                    : Commits this was built from, md5 of every file
+          Boot option 6 in garnet-boot.sh boots with Metal (metal=1 metal_all=1 ca_metallib=...).
           - userland/put system.apfs here.txt : Instructions for iOS system ramdisk
 
           Quick Boot Instructions:

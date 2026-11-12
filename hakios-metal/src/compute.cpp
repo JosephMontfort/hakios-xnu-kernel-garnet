@@ -436,7 +436,15 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
     if (o.hlsqCopies) {
         reg(stream, REG_A6XX_HLSQ_CS_CTRL_REG1, ctrl1);
     }
-    {
+    if (o.generation == ChipGeneration::kA7xx) {
+        // cs_program_emit's A7XX branch (fd6_compute.cc:131-152, Mesa 25.0.7): HLSQ_FS_CNTL_0 THREAD64, SP_CS_CNTL_0 (the
+        // A6xx's HLSQ_CS_CNTL_0 layout), SP_CS_CNTL_1 with the A7XX layout (THREADSIZE at bit 8, WORKITEMRASTORDER bit 15:
+        // linear), SP_CS_UNKNOWN_A9BE 0
+        reg(stream, REG_A6XX_HLSQ_FS_CNTL_0, 0);   // (pm4 moves it to 0xa9c6) THREADSIZE THREAD64
+        reg(stream, REG_A6XX_SP_CS_CNTL_0, csCntl0(k.workGroupIdRegid, k.localIdRegid));
+        reg(stream, REG_A6XX_SP_CS_CNTL_1, kRegidNone | uint32_t(threadsize) << 8);
+        reg(stream, 0xa9be, 0);
+    } else {
         uint32_t v[2] = {csCntl0(k.workGroupIdRegid, k.localIdRegid), csCntl1(threadsize)};
         stream.registers(REG_A6XX_HLSQ_CS_CNTL_0, v, 2);   // HLSQ_CS_CNTL_0, HLSQ_CS_CNTL_1
         if (o.hlsqCopies) {
@@ -530,6 +538,14 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
         uint32_t ones[3] = {1, 1, 1};
         stream.registers(REG_A6XX_HLSQ_CS_KERNEL_GROUP_X, ones, 3);
     }
+    if (o.generation == ChipGeneration::kA7xx) {
+        // cs_program_emit_local_size's A7XX registers (fd6_compute.cc:39-63): HLSQ_CS_CNTL_1 at its A7XX place (0xa9db:
+        // no linear local id, THREADSIZE bit 9, z-first raster order, 4 x (by the local height) workgroup tiles) and
+        // HLSQ_CS_LAST_LOCAL_SIZE (0xa9df), the size less one as NDRANGE_0 has it
+        const uint32_t tileH = (local[1] % 8 == 0) ? 3 : (local[1] % 4 == 0) ? 5 : (local[1] % 2 == 0) ? 9 : 17;
+        reg(stream, 0xa9db, kRegidNone | uint32_t(threadsize) << 9 | 1u << 11 | 4u << 20 | tileH << 26);
+        reg(stream, 0xa9df, (local[0] - 1) << 2 | (local[1] - 1) << 12 | (local[2] - 1) << 22);
+    }
     // A program longer than the instruction cache is fetched from memory as it runs, and that fetch is bounds-checked
     // against SP_FS_INSTRLEN of the other register context instead of SP_CS_INSTRLEN (Mesa issue 5892, MR 19023: "affects
     // all known gens"; Gallium's fd6_compute.cc and turnip's tu_dispatch work around it the same way). Measured here:
@@ -614,6 +630,9 @@ bool CommandBuffer::dispatchAny(const Kernel& k, const uint32_t* groups, const B
     compute::Options options = optionsIn;
     if (options.generation == ChipGeneration::kA6xx && queue_.gpu().generation() == ChipGeneration::kA7xx) {
         options.generation = ChipGeneration::kA7xx;
+    }
+    if (options.generation == ChipGeneration::kA7xx) {
+        options.hlsqCopies = false;   // the A7xx has no HLSQ_CS_CTRL_REG1; its SP_CS_CNTL_0/1 are written on their own below
     }
     if (!freshen(bindings)) return false;
     std::string why;

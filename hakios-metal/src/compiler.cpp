@@ -1,3 +1,4 @@
+#include <atomic>
 #include "hakios-metal/compiler.hpp"
 
 #include <algorithm>
@@ -45,18 +46,42 @@ bool argumentBufferLayout(const void*, size_t, uint32_t, std::vector<std::pair<u
     return false;
 }
 
+uint32_t setCompilerChip(uint32_t chipId) { return chipId; }
+uint32_t compilerChip() { return 0; }
+
 #else
+
+namespace {
+std::atomic<uint32_t> gCompilerChip{0};
+}
+
+// Mesa's device table is keyed on the chip id: the A710 (0x07010000, FD710 in adreno-710.patch) gets a7xx_gen1's ir3
+// (delay slots, alias.tex, non-zero FS constlen, its own const file sizes); an id Mesa does not know keeps the A635's.
+uint32_t setCompilerChip(uint32_t chipId) {
+    fd_dev_id id{};
+    id.chip_id = chipId;
+    uint32_t want = (chipId != 0 && fd_dev_info_raw(&id) != nullptr) ? chipId : a6xx::kChipId;
+    uint32_t expected = 0;
+    gCompilerChip.compare_exchange_strong(expected, want);
+    return gCompilerChip.load();
+}
+
+uint32_t compilerChip() {
+    uint32_t c = gCompilerChip.load();
+    return c != 0 ? c : a6xx::kChipId;
+}
 
 namespace {
 
 std::mutex gCompilerLock;   // ir3 keeps state in the compiler object; one compilation at a time
 
-// one compiler for the chip, as the kernel names it: Mesa's table resolves 0x06030500 to the Adreno 7c+ Gen 3 row
+// one compiler for the chip, as the kernel names it (setCompilerChip): 0x06030500 is Mesa's Adreno 7c+ Gen 3 row,
+// 0x07010000 the A710's (FD710)
 ir3_compiler* theCompiler() {
     static ir3_compiler* compiler = [] {
         fd_dev_id id{};
         id.gpu_id = 0;
-        id.chip_id = a6xx::kChipId;
+        id.chip_id = setCompilerChip(0);
         // A framebuffer fetch (nir_texop_txf_ms_fb) through the FS's own texture table, at the slot after its last
         // texture, as turnip has it (tu_device.cc: -1): the zero default would make it a bindless read of descriptor
         // set 0, which this driver never binds
@@ -1070,7 +1095,7 @@ bool hasCompiler() { return theCompiler() != nullptr; }
 std::unique_ptr<CompiledKernel> compileAir(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants) {
     std::lock_guard<std::mutex> g(gCompilerLock);
     if (theCompiler() == nullptr) {
-        refuse(why, "ir3 has no compiler for chip 0x06030500");
+        refuse(why, "ir3 has no compiler for chip " + std::to_string(compilerChip()));
         return nullptr;
     }
     Translation t;
@@ -1164,7 +1189,7 @@ std::string stageCacheName(const void* bitcode, size_t size, const FunctionConst
             h[1] = (h[1] ^ b) * 0x1000193ull + (h[1] >> 29);
         }
     };
-    const uint32_t layout[3] = {uint32_t(sizeof(Stage)), uint32_t(sizeof(Kernel)), iboBase};
+    const uint32_t layout[4] = {uint32_t(sizeof(Stage)), uint32_t(sizeof(Kernel)), iboBase, compilerChip()};
     mix(kCacheBuild, strlen(kCacheBuild));
     mix(layout, sizeof(layout));
     mix(bitcode, size);
@@ -1279,7 +1304,7 @@ std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, st
                                            const KnownBuffer* known) {
     std::lock_guard<std::mutex> g(gCompilerLock);
     if (theCompiler() == nullptr) {
-        refuse(why, "ir3 has no compiler for chip 0x06030500");
+        refuse(why, "ir3 has no compiler for chip " + std::to_string(compilerChip()));
         return nullptr;
     }
     const std::string name = stageCacheName(bitcode, size, constants, iboBase, known);

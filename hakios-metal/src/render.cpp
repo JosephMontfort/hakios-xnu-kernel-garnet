@@ -41,6 +41,10 @@ const char* stageName(const Stage& s) { return s.k.name != nullptr ? s.k.name : 
 
 void reg(pm4::Stream& st, uint32_t r, uint32_t v) { st.registers(r, &v, 1); }
 
+// GRAS/RB_BIN_CONTROL on the A7XX have no BUFFERS_LOCATION (bits 22-23; set_bin_size, fd6_gmem.cc:928-943): the A7xx
+// takes it from RB_UNKNOWN_8812
+uint32_t a7xxBinControl(const Options& o, uint32_t v) { return o.generation == ChipGeneration::kA7xx ? (v & ~0x00c00000u) : v; }
+
 void reg64(pm4::Stream& st, uint32_t r, uint64_t a) {
     uint32_t v[2] = {uint32_t(a), uint32_t(a >> 32)};
     st.registers(r, v, 2);
@@ -1184,7 +1188,16 @@ void passStart(pm4::Stream& stream, uint32_t W, uint32_t H, uint64_t table, cons
     // wrote at boot (hakios.adreno.c:2904) and Mesa never sets for this chip -- the switch is the bisect's
     if (o.ccuCntl) {
         stream.waitForIdle();
-        reg(stream, REG_A6XX_RB_CCU_CNTL, rbCcuCntlSysmem() | (o.ccuConcurrentResolve ? A6XX_RB_CCU_CNTL_CONCURRENT_RESOLVE : 0u));
+        if (o.generation == ChipGeneration::kA7xx) {
+            // the A7xx split RB_CCU_CNTL in two (fd6_emit_static_regs / fd6_emit_ccu_cntl, Mesa 25.0.7): RB_CCU_CNTL keeps
+            // GMEM_FAST_CLEAR_DISABLE (what fd6 writes for every A7XX) and the resolve modes, RB_CCU_CNTL2 (0x88e5) the
+            // caches' places in GMEM. Sysmem: depth at 0, FULL; colour after it (num_ccu 1 x 256 KiB), FULL.
+            reg(stream, REG_A6XX_RB_CCU_CNTL, 0x1u);
+            const uint32_t colorOffset = a7xx::kNumCcu * 256u * 1024u;
+            reg(stream, 0x88e5, ((colorOffset & 0x1fffffu) >> 12) << 23 | (colorOffset >> 21) << 2);
+        } else {
+            reg(stream, REG_A6XX_RB_CCU_CNTL, rbCcuCntlSysmem() | (o.ccuConcurrentResolve ? A6XX_RB_CCU_CNTL_CONCURRENT_RESOLVE : 0u));
+        }
     }
     // fd6's LRZ_FLUSH at the start of a sysmem pass (fd6_gmem.cc:2001); turnip has none here. Under lrzOff with the LRZ
     // registers below, since it is the LRZ it flushes
@@ -1206,9 +1219,19 @@ void passStart(pm4::Stream& stream, uint32_t W, uint32_t H, uint64_t table, cons
         reg(stream, REG_A6XX_RB_WINDOW_OFFSET2, regXY(0, 0));
         reg(stream, (o.generation == ChipGeneration::kA7xx) ? a7xx::REG_A7XX_SP_WINDOW_OFFSET : REG_A6XX_SP_WINDOW_OFFSET, regXY(0, 0));
         reg(stream, REG_A6XX_SP_TP_WINDOW_OFFSET, regXY(0, 0));
-        reg(stream, REG_A6XX_GRAS_BIN_CONTROL, binControlSysmem(o.binControlLrzFeedback));
-        reg(stream, REG_A6XX_RB_BIN_CONTROL, binControlSysmem(o.binControlLrzFeedback));
+        reg(stream, REG_A6XX_GRAS_BIN_CONTROL, a7xxBinControl(o, binControlSysmem(o.binControlLrzFeedback)));
+        reg(stream, REG_A6XX_RB_BIN_CONTROL, a7xxBinControl(o, binControlSysmem(o.binControlLrzFeedback)));
         reg(stream, REG_A6XX_RB_BIN_CONTROL2, 0);
+        if (o.generation == ChipGeneration::kA7xx) {
+            // fd6_emit_sysmem_prep's A7XX block (fd6_gmem.cc:2032-2038): every buffer in sysmem (RB_UNKNOWN_8812 0x3ff, the
+            // A7xx's stand-in for BUFFERS_LOCATION), the chip's RB_UNKNOWN_8E06, GRAS_UNKNOWN_8007 0, GRAS_UNKNOWN_8110 2,
+            // RB_UNKNOWN_8E09 4
+            reg(stream, 0x8812, 0x3ff);
+            reg(stream, a7xx::REG_A7XX_RB_UNKNOWN_8E06, 0x00080000);
+            reg(stream, 0x8007, 0);
+            reg(stream, 0x8110, 0x2);
+            reg(stream, 0x8e09, 0x4);
+        }
     }
     if (o.marker) {
         command1(stream, CP_SET_MARKER, setMarker0(RM6_DIRECT_RENDER));
@@ -1642,7 +1665,8 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
         // (a depth array's layer: that many tiled planes on, sliceBytes apart)
         const uint64_t depthAt = d.levelAddress(pass.depthLevel) + uint64_t(pass.depthSlice) * d.sliceBytes();
         regs(stream, REG_A6XX_RB_DEPTH_BUFFER_INFO,
-             {A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_32), A6XX_RB_DEPTH_BUFFER_PITCH(uint32_t(d.level(pass.depthLevel).pitch)),
+             {A6XX_RB_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_32) | (o.generation == ChipGeneration::kA7xx ? uint32_t(TILE6_3) << 5 : 0u),   // A7XX: TILEMODE
+              A6XX_RB_DEPTH_BUFFER_PITCH(uint32_t(d.level(pass.depthLevel).pitch)),
               A6XX_RB_DEPTH_BUFFER_ARRAY_PITCH(uint32_t(d.depthPlaneBytes())), uint32_t(depthAt), uint32_t(depthAt >> 32), 0});
         reg(stream, REG_A6XX_GRAS_SU_DEPTH_BUFFER_INFO, A6XX_GRAS_SU_DEPTH_BUFFER_INFO_DEPTH_FORMAT(DEPTH6_32));
         regs(stream, REG_A6XX_RB_DEPTH_FLAG_BUFFER_BASE, {0, 0, 0});
@@ -1650,7 +1674,7 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
             // the S8 plane as a separate stencil buffer (tu6_emit_zs's D32_SFLOAT_S8_UINT branch): SEPARATE_STENCIL, its
             // pitch and layer, its base, BASE_GMEM 0; A6XX's RB_STENCIL_INFO has no tile field -- stencil is TILE6_3, as laid out
             const uint64_t sb = d.gpuAddress() + d.stencilOffset();
-            regs(stream, REG_A6XX_RB_STENCIL_INFO, {A6XX_RB_STENCIL_INFO_SEPARATE_STENCIL, uint32_t(d.stencilPitch() >> 6), uint32_t(d.stencilPlaneBytes() >> 6),
+            regs(stream, REG_A6XX_RB_STENCIL_INFO, {A6XX_RB_STENCIL_INFO_SEPARATE_STENCIL | (o.generation == ChipGeneration::kA7xx ? uint32_t(TILE6_3) << 2 : 0u), uint32_t(d.stencilPitch() >> 6), uint32_t(d.stencilPlaneBytes() >> 6),
                                                     uint32_t(sb), uint32_t(sb >> 32), 0});
         } else {
             reg(stream, REG_A6XX_RB_STENCIL_INFO, 0);
@@ -1666,7 +1690,9 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (o.mrt) {
         for (uint32_t i = 0; i < numRt; i++) {
             const MrtWords& m = mrts[i];
-            regs(stream, regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, i), {m.bufInfo, m.pitch, m.arrayPitch, m.baseLo, m.baseHi, m.baseGmem});
+            // A7XX: a compressed target says so in its own BUF_INFO (LOSSLESSCOMPEN, bit 11: fd6_view.c:411)
+            const uint32_t bufInfo = m.bufInfo | ((o.generation == ChipGeneration::kA7xx && m.flagPitch != 0) ? (1u << 11) : 0u);
+            regs(stream, regRbMrt(REG_A6XX_RB_MRT_BUF_INFO, i), {bufInfo, m.pitch, m.arrayPitch, m.baseLo, m.baseHi, m.baseGmem});
             reg(stream, regSpFsMrtReg(i), m.spFsMrtReg);
             regs(stream, regRbMrtFlagBuffer(REG_A6XX_RB_MRT_FLAG_BUFFER_ADDR, i), {m.flagLo, m.flagHi, m.flagPitch});
         }
@@ -1698,7 +1724,15 @@ bool encodeDraw(pm4::Stream& stream, const Program& program, const RenderPass& p
     if (o.renderCntl) {
         uint32_t flagMrts = 0;
         for (uint32_t i = 0; i < numRt; i++) flagMrts |= mrts[i].flagPitch != 0 ? 1u << i : 0u;
-        reg(stream, REG_A6XX_RB_RENDER_CNTL, o.renderCntlZero ? 0u : rbRenderCntlSysmem() | A6XX_RB_RENDER_CNTL_FLAG_MRTS(flagMrts));
+        if (o.generation == ChipGeneration::kA7xx) {
+            // A7XX's RB_RENDER_CNTL has no CCUSINGLECACHELINESIZE or FLAG_MRTS (the flag buffer is turned on per target,
+            // RB_MRT_BUF_INFO.LOSSLESSCOMPEN): fd6 update_render_cntl writes TYPE_TILED / LR_TB, not binning, both 0, and
+            // A7XX_GRAS_SU_RENDER_CNTL (0x8116) 0
+            reg(stream, REG_A6XX_RB_RENDER_CNTL, 0);
+            reg(stream, 0x8116, 0);
+        } else {
+            reg(stream, REG_A6XX_RB_RENDER_CNTL, o.renderCntlZero ? 0u : rbRenderCntlSysmem() | A6XX_RB_RENDER_CNTL_FLAG_MRTS(flagMrts));
+        }
     }
     // 8. LRZ off (tu_lrz.cc:936-944 via a zero state; r3d :1622-1623; fd6 build_lrz with no zsbuf, fd6_emit.cc:262-270)
     // and fd6's zeroed LRZ buffer registers (emit_lrz, fd6_gmem.cc:250-260): BASE (2), PITCH, FAST_CLEAR_BUFFER_BASE (2)
@@ -2747,7 +2781,7 @@ bool appendDeduped(pm4::Stream& to, const pm4::Stream& from, CommandBuffer::RegS
             uint32_t runStart = 0, runLen = 0;
             for (uint32_t k = 0; k < h.count; k++) {
                 const uint32_t reg = h.reg + k, value = w[i + 1 + k];
-                const bool same = regs.hold(reg, value) && reg != REG_A6XX_HLSQ_INVALIDATE_CMD;
+                const bool same = regs.hold(reg, value) && reg != REG_A6XX_HLSQ_INVALIDATE_CMD && reg != 0xab1f;   // (the A7XX's, pm4.cpp)
                 if (!same) {
                     if (runLen == 0) runStart = k;
                     runLen++;
@@ -2784,6 +2818,13 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     render::Options options = optionsIn;
     if (options.generation == ChipGeneration::kA6xx && queue_.gpu().generation() == ChipGeneration::kA7xx) {
         options.generation = ChipGeneration::kA7xx;
+    }
+    if (options.generation == ChipGeneration::kA7xx) {
+        // GMEM tiles on the A7xx resolve through CP_EVENT_WRITE7 blits and a GMEM CCU layout (RB_CCU_CNTL2, RB_UNKNOWN_8812
+        // 0, tu7_emit_tile_render_begin_regs) this driver does not write yet: every pass is drawn in sysmem, through the
+        // CCU, which is fd6_emit_sysmem_prep's path
+        options.gmem = false;
+        options.gmemBinning = false;
     }
     // A compressed texture whose rows this processor changed since the GPU last copied them in (Texture::staging): the
     // copy first, by the 2D engine into the UBWC layout, in a pass of its own before this draw's

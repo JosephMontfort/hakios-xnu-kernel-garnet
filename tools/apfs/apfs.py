@@ -1163,6 +1163,46 @@ def cmd_census(path, want):
     c.close()
 
 
+def cmd_extract(path, dest, want):
+    """Copy a volume's whole tree into DEST: directories, regular files (decompressed) and symlinks, with their
+    permission bits. Owners are not kept (mkapfs.py writes root:wheel); device nodes, sockets and fifos are skipped and
+    counted. Used to rebuild an image with files added or replaced (mkapfs.py NAME=DEST)."""
+    c = Container(path)
+    v = pick_volume(c, want)
+    os.makedirs(dest, exist_ok=True)
+    nd = nf = nl = skipped = 0
+    root = v.inode(ROOT_DIR_INO_NUM)
+    dirs = [(dest, root.mode & 0o7777)] if root is not None else []
+    for p, _name, fid, dt in walk(v, ROOT_DIR_INO_NUM):
+        ino = v.inode(fid)
+        if ino is None:
+            skipped += 1
+            continue
+        out = os.path.join(dest, p.lstrip("/"))
+        if ino.is_dir:
+            os.makedirs(out, exist_ok=True)
+            dirs.append((out, ino.mode & 0o7777))
+            nd += 1
+        elif ino.is_link:
+            if os.path.lexists(out):
+                os.unlink(out)
+            os.symlink((ino.symlink_target_bytes() or b"").decode("utf-8", "surrogateescape"), out)
+            nl += 1
+        elif ino.is_reg:
+            with open(out, "wb") as f:
+                f.write(ino.contents())
+            os.chmod(out, ino.mode & 0o7777)
+            nf += 1
+        else:
+            skipped += 1
+    # the directories' modes last, deepest first, so that a read-only one was still writable while it filled
+    for out, mode in reversed(dirs):
+        os.chmod(out, mode | 0o200 if mode & 0o200 == 0 else mode)
+    print("volume %r -> %s: %d directories, %d files, %d symlinks, %d skipped"
+          % (v.volname, dest, nd, nf, nl, skipped))
+    c.close()
+
+
 def main(argv):
     want = None
     args = []
@@ -1176,7 +1216,7 @@ def main(argv):
         i += 1
     if not args:
         print(__doc__ or "", file=sys.stderr)
-        print("usage: apfs.py {info|ls|tree|cat|stat|census} IMAGE [PATH] [-v VOLUME]",
+        print("usage: apfs.py {info|ls|tree|cat|stat|census|extract} IMAGE [PATH|DEST] [-v VOLUME]",
               file=sys.stderr)
         return 2
     cmd = args[0]
@@ -1193,6 +1233,8 @@ def main(argv):
             cmd_stat(args[1], args[2], want)
         elif cmd == "census":
             cmd_census(args[1], want)
+        elif cmd == "extract":
+            cmd_extract(args[1], args[2], want)
         else:
             raise ApfsError("unknown command %r" % cmd)
     except ApfsError as e:

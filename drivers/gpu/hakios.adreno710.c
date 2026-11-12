@@ -3182,7 +3182,15 @@ step_core_power(void)
 #define CORE_MATCH              0
 #define PTE_CORE                (PTE_GMU | PTE_UNPRIVILEGED)
 #define PTE_READ_ONLY           (1ull << 7)     /* Linux gives the core its microcode so (MSM_BO_GPU_READONLY) */
-#define CORE_RING_ADDRESS       0x01000000u
+/*
+ * The ring is at 0x01300000, not Linux's 0x01000000: on the Adreno 710 KGSL puts the UCHE's window onto GMEM at
+ * ALIGN(gmem_size, uche_gmem_alignment) = 16 MB (adreno.c, adreno_gen7.c: UCHE_GMEM_RANGE_MIN/MAX), and Mesa reads a
+ * tile through the texture unit at that address (framebuffer fetch, fd6_gmem.cc; r2d resolves, fd6_blitter.cc). The
+ * window [CORE_GMEM_ADDRESS, + 512K) must have nothing mapped in it.
+ */
+#define CORE_RING_ADDRESS       0x01300000u
+#define CORE_GMEM_ADDRESS       0x01000000u     /* KGSL's uche_gmem_base for gen7_3_0; GET_PARAM GMEM_BASE */
+#define CORE_GMEM_SIZE          0x00080000u     /* 512 KiB of GMEM */
 #define CORE_RING_SIZE          0x8000u         /* Linux's; 8192 words */
 #define CORE_SQE_ADDRESS        0x01100000u
 #define CORE_SCRATCH_ADDRESS    0x01200000u
@@ -3215,6 +3223,8 @@ step_core_power(void)
 #define CP_AHB_CNTL             GPU_WORD(0x098d)
 #define CP_LPAC_PROG_FIFO_SIZE  GPU_WORD(0x0b34)
 #define UCHE_WRITE_RANGE_MAX    GPU_WORD(0x0e05)
+#define UCHE_GMEM_RANGE_MIN     GPU_WORD(0x0e0b)
+#define UCHE_GMEM_RANGE_MAX     GPU_WORD(0x0e0d)
 #define UCHE_WRITE_THRU_BASE    GPU_WORD(0x0e07)
 #define UCHE_TRAP_BASE          GPU_WORD(0x0e09)
 #define UCHE_CACHE_WAYS         GPU_WORD(0x0e17)
@@ -3232,6 +3242,9 @@ step_core_power(void)
 /* commands (Mesa's adreno_pm4.xml); a packet is a header word and so many more */
 #define CP_NOP                  0x10
 #define CP_THREAD_CONTROL       0x17
+#define CP_THREAD_BR            1u              /* CP_SET_THREAD_BR */
+#define CP_THREAD_NO_CONCURRENT_BIN (1u << 27)  /* CP_THREAD_CONTROL_0_CONCURRENT_BIN_DISABLE */
+#define CP_THREAD_SYNC          (1u << 31)      /* CP_THREAD_CONTROL_0_SYNC_THREADS */
 #define CP_WAIT_FOR_IDLE        0x26
 #define CP_BLIT                 0x2c
 #define CP_MEM_WRITE            0x3d
@@ -3532,6 +3545,10 @@ step_core_start(void)
 		put(&gpu, "uche_cache_ways", UCHE_CACHE_WAYS, 0x00040004);
 		put(&gpu, "uche_gbif_gx_config", GPU_WORD(0x0e3a), 0x10240e0);
 		put(&gpu, "uche_cmdq_config", GPU_WORD(0x0e3c), 0x6690e);
+		/* the UCHE's window onto GMEM, where KGSL puts it for this GPU (adreno_gen7.c gen7_start): without it a
+		 * texture fetch of a tile (framebuffer fetch, an r2d resolve) reads whatever the address maps to */
+		put64(&gpu, "uche_gmem_range_min", UCHE_GMEM_RANGE_MIN, CORE_GMEM_ADDRESS);
+		put64(&gpu, "uche_gmem_range_max", UCHE_GMEM_RANGE_MAX, CORE_GMEM_ADDRESS + CORE_GMEM_SIZE - 1);
 	} else {
 		put64(&gpu, "uche_write_range_max", UCHE_WRITE_RANGE_MAX, 0x0001ffffffffffc0ull);
 		put(&gpu, "uche_filter_cntl", UCHE_FILTER_CNTL, 0x804);
@@ -4056,7 +4073,7 @@ static unsigned gpu_free_count;
  * There is one address space for everything the 3D core reads and writes: context 0 of the
  * GPU's SMMU, 39 bits of it, three levels of 4K pages, made by step 18 (core_space above).
  * Below GPU_ADDRESSES_START the steps put their own blocks at constants of their own -- the
- * ring at 0x01000000, the microcode at 0x01100000, the scratch page at 0x01200000, the test's
+ * ring at 0x01300000, the microcode at 0x01100000, the scratch page at 0x01200000, the test's
  * target at 0x10000000 -- and those are constants and not allocations: there is one of each
  * for the whole run. From GPU_ADDRESSES_START up the addresses are handed out a buffer at a
  * time by hakios_gpu_address() out of gpu_free, which is this driver's whole allocator: a
@@ -4178,8 +4195,10 @@ bool
 hakios_gpu_parameter(uint32_t which, uint64_t *value)
 {
 	switch (which) {
+	case 0x06:                              /* GMEM_BASE: the UCHE's window onto GMEM (step "uche_gmem_range_min") */
+		*value = is_garnet_adreno ? CORE_GMEM_ADDRESS : 0;
+		return true;
 	case 0x01:                              /* GPU_ID: none, the chip ID says it */
-	case 0x06:                              /* GMEM_BASE */
 	case 0x08:                              /* PP_PGTABLE */
 	case 0x0a:                              /* SUSPENDS */
 	case 0x11:                              /* RAYTRACING */
@@ -4438,7 +4457,7 @@ hakios_gpu_worked(uint64_t *microseconds, uint32_t *submissions, uint32_t by[7])
 uint32_t
 hakios_gpu_submit(const uint64_t *addresses, const uint32_t *words, uint32_t count)
 {
-	uint32_t wanted = 26 + 4 * count, room = 0;
+	uint32_t wanted = 40 + 4 * count, room = 0;    /* fixed words: 20, and 10 more of thread control and CCU on garnet */
 
 	for (int i = 0; i < 20000; i++) {
 		room = (rd(gpu.base + CP_RB_RPTR) + RING_WORDS - ring_at - 1) % RING_WORDS;
@@ -4454,6 +4473,11 @@ hakios_gpu_submit(const uint64_t *addresses, const uint32_t *words, uint32_t cou
 	if (++gpu_fence == 0) {
 		gpu_fence = 1;
 	}
+	if (is_garnet_adreno) {
+		/* Linux's a7xx_submit: both threads in step, then the work on BR (binning stays off, step 20) */
+		ring_command(CP_THREAD_CONTROL, 1);
+		ring(CP_THREAD_SYNC | CP_THREAD_BR | CP_THREAD_NO_CONCURRENT_BIN);
+	}
 	ring_time(gpu_fence, 0);
 	ring_command(CP_EVENT_WRITE, 1);
 	ring(EVENT_INVALIDATE_DEPTH);
@@ -4467,6 +4491,16 @@ hakios_gpu_submit(const uint64_t *addresses, const uint32_t *words, uint32_t cou
 	}
 	if (gpu_exact) {
 		ring_command(CP_WAIT_FOR_IDLE, 0);      /* the time is the pipeline's, not the command processor's, which is ahead of it */
+	}
+	if (is_garnet_adreno) {
+		/* Linux's a7xx_submit after the IBs: whatever thread a command buffer left selected, the fence is BR's,
+		 * after both threads are done, with the CCU invalidated behind the work (CCU_INVALIDATE_DEPTH/COLOR) */
+		ring_command(CP_THREAD_CONTROL, 1);
+		ring(CP_THREAD_SYNC | CP_THREAD_BR | CP_THREAD_NO_CONCURRENT_BIN);
+		ring_command(CP_EVENT_WRITE, 1);
+		ring(EVENT_INVALIDATE_DEPTH);
+		ring_command(CP_EVENT_WRITE, 1);
+		ring(EVENT_INVALIDATE_COLOR);
 	}
 	ring_time(gpu_fence, 1);
 	ring_register(CP_SCRATCH_REG2, gpu_fence);

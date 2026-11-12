@@ -18,15 +18,15 @@ index b352d12..5f3b421 100644
 +   /* Darwin on hakios: on the Adreno 730/710 what a draw reads of the framebuffer
 +    * inside a batch came out wrong (blocks of a blurred backdrop, triangle by
 +    * triangle, in CoreAnimation's vibrant layers); flushing after every draw
-+    * mended it.  So a draw that reads the framebuffer starts a batch of its own:
-+    * what is before it is in memory.  FD_FBFETCH_FLUSH=0 leaves it out.
++    * mended it -- the kernel had no UCHE window onto GMEM (GMEM_BASE 0); it has one
++    * now (hakios.adreno710.c), so this is off by default.  FD_FBFETCH_FLUSH=1: on.
 +    */
 +   {
 +      struct fd_context *ctx = fd_context(pctx);
 +      static int wanted = -1;
 +
 +      if (wanted < 0)
-+         wanted = debug_get_num_option("FD_FBFETCH_FLUSH", 1);
++         wanted = debug_get_num_option("FD_FBFETCH_FLUSH", 0);
 +      if (wanted && ctx->screen->gen >= 7 && ctx->prog.fs && ctx->batch &&
 +          ctx->batch->num_draws != 0 &&
 +          ir3_get_shader_info((struct ir3_shader_state *)ctx->prog.fs)->fs.uses_fbfetch_output)

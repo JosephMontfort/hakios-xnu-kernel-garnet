@@ -1,4 +1,5 @@
 #include "hakios-metal/texture.hpp"
+#include "hakios-metal/compiler.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -463,7 +464,7 @@ std::shared_ptr<Texture> Texture::make(Gpu& gpu, const TextureDesc& desc, std::s
             if (staging == nullptr) return nullptr;
         }
         fd_dev_id id{};
-        id.chip_id = a6xx::kChipId;
+        id.chip_id = compilerChip();
         const struct ::fd_dev_info* dev = ::fd_dev_info_raw(&id);
         fdl_layout l{};
         l.ubwc = true;

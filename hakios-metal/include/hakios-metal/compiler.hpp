@@ -102,6 +102,11 @@ struct CompiledProgram {
 // whether a compiler is in this build
 bool hasCompiler();
 
+// The chip the compiler (and UBWC layouts) are built for: the GPU's GET_PARAM chip id. Must be set before the first
+// compilation; 0 or a chip Mesa has no row for keeps the A635 default (a6xx::kChipId). Returns the chip in effect.
+uint32_t setCompilerChip(uint32_t chipId);
+uint32_t compilerChip();
+
 // A function constant's value as the pipeline supplies it (MTLFunctionConstantValues): INDEX is the module's
 // [[function_constant(n)]], BITS the value as the bits of its type -- a bool 0 or 1, an integer or a float its own bits
 // in the low end, a vector's component i at bit i * its width (nir_air.h: air_constant_value). A constant not supplied

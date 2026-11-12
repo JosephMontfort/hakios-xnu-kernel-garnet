@@ -92,3 +92,28 @@ TEST(memcpy_layout_is_mesas) {
     CHECK_EQ(w[4], 0x55667788u);     // DST_LO
     CHECK_EQ(w[5], 0x11223344u);     // DST_HI
 }
+
+// The A7xx's register moves (Mesa 25.0.7 a6xx.xml): a run is translated register by register, moved ones to their A7xx
+// place, A6xx-only ones dropped, the rest untouched; and translating an already-translated stream changes nothing
+TEST(a7xx_register_moves) {
+    CHECK_EQ(a7xxRegister(0xbb08), 0xab1fu);   // HLSQ_INVALIDATE_CMD
+    CHECK_EQ(a7xxRegister(0xb984), 0xa9c9u);   // HLSQ_CONTROL_3_REG
+    CHECK_EQ(a7xxRegister(0xb996), 0xa9dau);   // HLSQ_CS_NDRANGE_6
+    CHECK_EQ(a7xxRegister(0xb4ca), 0xb2cau);   // SP_PS_2D_SRC_FLAGS
+    CHECK_EQ(a7xxRegister(0x8a00), kDropRegister);
+    CHECK_EQ(a7xxRegister(0x8800), 0x8800u);   // RB_BIN_CONTROL: same place
+    setA7xx(true);
+    Stream s;
+    const uint32_t v[3] = {1, 2, 3};
+    s.registers(0xb980, v, 3);   // HLSQ_FS_CNTL_0, (UNKNOWN_B981: dropped), HLSQ_CONTROL_1_REG
+    CHECK_EQ(s.size(), 4u);
+    CHECK_EQ(s.words()[0], type4(0xa9c6, 1));
+    CHECK_EQ(s.words()[1], 1u);
+    CHECK_EQ(s.words()[2], type4(0xa9c7, 1));
+    CHECK_EQ(s.words()[3], 3u);
+    Stream t;
+    t.registers(0xa9c6, v, 2);   // already the A7xx's: one packet, as written
+    CHECK_EQ(t.size(), 3u);
+    CHECK_EQ(t.words()[0], type4(0xa9c6, 2));
+    setA7xx(false);
+}

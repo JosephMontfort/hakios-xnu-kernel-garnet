@@ -18,6 +18,7 @@
 
 #include "hakios-metal/command.hpp"
 #include "hakios-metal/compiler.hpp"
+#include "hakios-metal/pm4.hpp"
 #include "hakios-metal/fake_gpu.hpp"
 #include "hakios-metal/hakios_metal.h"
 #include "hakios-metal/a6xx.hpp"
@@ -212,10 +213,11 @@ void hakios_metal_buffer_counts(unsigned* made, unsigned* reused, unsigned long 
 
 const char* hakios_metal_error(void) { return lastError.c_str(); }
 
-// Tiles, GMEM offsets and the shader compiler are built for one chip (a6xx.hpp). A kernel that does not say (0) is taken at its
-// word that it is that one: only a chip it names as another is refused, so that the window server stays on OpenGL ES there.
-bool hakios_metal_chip_known(uint32_t chip) { return chip == 0 || chip == a6xx::kChipId; }
-static bool chipKnown(uint32_t chip) { return hakios_metal_chip_known(chip); }
+// Tiles, GMEM offsets and the shader compiler follow the chip (chip.hpp): the A635 and the A710 (garnet) are known. A
+// kernel that does not say (0) is taken to be the A635: only a chip with no tables here is refused, so that the window
+// server stays on OpenGL ES there.
+bool hakios_metal_chip_known(uint32_t chip) { return chip == 0 || usable(chip); }
+[[maybe_unused]] static bool chipKnown(uint32_t chip) { return hakios_metal_chip_known(chip); }
 
 static hakios_metal_device* deviceOn(std::unique_ptr<Transport> t) {
     auto* d = new hakios_metal_device;
@@ -235,12 +237,15 @@ hakios_metal_device* hakios_metal_open(void) {
     hakios_metal_device* d = deviceOn(std::move(t));
     if (!chipKnown(d->gpu->chipId())) {
         char text[160];
-        snprintf(text, sizeof(text), "the GPU's chip ID is %#x: the tables of this driver are the Adreno's of chip ID %#x (a6xx.hpp), another's would hang it",
-                 d->gpu->chipId(), a6xx::kChipId);
+        snprintf(text, sizeof(text), "the GPU's chip ID is %#x: this driver has tables for the A635 (%#x) and the A710 (%#x) only, another's would hang it",
+                 d->gpu->chipId(), a6xx::kChipId, a7xx::kChipId);
         failed(text);
         delete d;
         return nullptr;
     }
+    setCompilerChip(d->gpu->chipId());
+    // the A7xx's register moves (pm4.cpp) for every stream this process writes
+    pm4::setA7xx(d->gpu->generation() == ChipGeneration::kA7xx);
     return d;
 #endif
 #endif
