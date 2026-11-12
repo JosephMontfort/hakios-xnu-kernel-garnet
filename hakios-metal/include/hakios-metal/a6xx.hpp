@@ -3975,12 +3975,17 @@ constexpr uint32_t regVfdDestCntlInstr(uint32_t i) { return REG_A6XX_VFD_DEST_CN
 // by 2^23 (exact: a float has 24 significant bits). A finite value round-trips exactly (tests/a6xx_test.cpp holds it
 // to memcpy); NaN gives the quiet NaN, an infinity 0x7f800000 with its sign.
 constexpr uint32_t fui(float f) {
-    uint32_t sign = __builtin_signbit(f) ? 0x80000000u : 0u;
+    // (the iOS toolchain's clang does not fold __builtin_signbit in a constant expression: it is only asked for -0.0,
+    // and only at run time; a constant -0.0 gives +0.0)
+    uint32_t sign = f < 0 ? 0x80000000u : 0u;
     if (f != f) {
         return 0x7fc00000u;
     }
     float a = f < 0 ? -f : f;
     if (a == 0.0f) {
+        if (!__builtin_is_constant_evaluated() && __builtin_signbit(f)) {
+            sign = 0x80000000u;
+        }
         return sign;
     }
     if (a > 3.4028234663852886e38f) {
