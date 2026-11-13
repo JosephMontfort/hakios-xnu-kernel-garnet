@@ -309,7 +309,7 @@ jobs:
             echo "built       : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo
             echo "md5 of every file in this package:"
-            (cd dist/payload && find . -type f ! -name BUILD-INFO.txt | LC_ALL=C sort | xargs md5sum)
+            (cd dist/payload && find . -type f ! -name BUILD-INFO.txt -print0 | LC_ALL=C sort -z | xargs -0 md5sum)
           } > dist/payload/BUILD-INFO.txt
           cat dist/payload/BUILD-INFO.txt
 
