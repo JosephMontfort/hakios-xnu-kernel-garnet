@@ -1628,6 +1628,11 @@ void hakios_metal_cb_commit(hakios_metal_cb* cb, void (*callback)(hakios_metal_c
     cb->cb->commit();
 }
 
+// the commit is one of the jobs posted for this buffer: once they are done it has been submitted
+void hakios_metal_cb_wait_scheduled(hakios_metal_cb* cb) {
+    syncOne(cb);
+}
+
 void hakios_metal_cb_wait(hakios_metal_cb* cb) {
     syncOne(cb);
     cb->cb->waitUntilCompleted();

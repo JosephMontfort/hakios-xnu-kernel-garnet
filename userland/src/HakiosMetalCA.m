@@ -6292,7 +6292,7 @@ hm_completed(hakios_metal_cb *cb, void *context)
 
 - (void)commit
 {
-	BOOL met = YES;
+	BOOL met = YES, waitFirst;
 
 	if (_committed) {
 		HM_ONCE("a command buffer was committed twice; Metal asserts on that, this plug-in does nothing the second time\n");
@@ -6321,6 +6321,8 @@ hm_completed(hakios_metal_cb *cb, void *context)
 			}
 			[waits release];
 			hakios_metal_cb_commit(_cb, hm_completed, self);
+			/* (metal_defer=1: the commit itself is queued; "sent" and "scheduled" mean submitted to the GPU) */
+			hakios_metal_cb_wait_scheduled(_cb);
 			dispatch_semaphore_signal(_sent);
 			[self hakiosDeliverScheduled];
 			[self release];
@@ -6332,6 +6334,19 @@ hm_completed(hakios_metal_cb *cb, void *context)
 
 		hakios_metal_cb_commit(_cb, hm_completed, self);
 		hm_fps_commit(hm_now() - began);
+	}
+	/*
+	 * metal_defer=1: the commit above was only queued for hakios-metal's recording thread. A scheduled handler is
+	 * where a window server hands the surface to the display, and the display waits only for submissions the kernel
+	 * has seen (MiniIOSurfaceDrawn): delivered before the submission, the panel showed frames the GPU had not drawn
+	 * yet -- black strips while anything moved, and the first Apple logo never shown. So with handlers waiting, the
+	 * submission comes first; a buffer with none goes on at once.
+	 */
+	@synchronized (self) {
+		waitFirst = [_scheduled count] != 0;
+	}
+	if (waitFirst) {
+		hakios_metal_cb_wait_scheduled(_cb);
 	}
 	[self hakiosDeliverScheduled];
 }
@@ -6351,8 +6366,16 @@ hm_completed(hakios_metal_cb *cb, void *context)
 	if (!_committed) {
 		HM_ONCE("a command buffer was waited on for scheduling before it was committed; Metal would wait for ever, "
 			"this plug-in returns\n");
+		return;
 	}
-	/* committed: hakios_metal_cb_commit returned with it scheduled, so there is nothing left to wait for */
+	if (_sent != NULL) {
+		/* a held commit: signalled once it has been submitted (passed on to the next waiter) */
+		dispatch_semaphore_wait(_sent, DISPATCH_TIME_FOREVER);
+		dispatch_semaphore_signal(_sent);
+		return;
+	}
+	/* submitted once its recording thread has come to the commit (metal_defer=1); at once otherwise */
+	hakios_metal_cb_wait_scheduled(_cb);
 }
 
 - (void)waitUntilCompleted

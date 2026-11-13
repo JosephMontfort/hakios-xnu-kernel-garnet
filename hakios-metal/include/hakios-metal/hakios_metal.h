@@ -541,6 +541,10 @@ void hakios_metal_cb_fail(hakios_metal_cb *cb, const char *why);
 /* CALLBACK(CB, CONTEXT) runs once, after completion or error, on the queue's thread; may be NULL */
 void hakios_metal_cb_commit(hakios_metal_cb *cb, void (*callback)(hakios_metal_cb *cb, void *context), void *context);
 void hakios_metal_cb_wait(hakios_metal_cb *cb);
+/* until a committed CB has been handed to the GPU (Metal's "scheduled"): with the queue deferred
+ * (hakios_metal_queue_set_deferred) hakios_metal_cb_commit returns before that, and the display only
+ * waits for submissions the kernel has seen; at once otherwise, since a commit then submits before it returns */
+void hakios_metal_cb_wait_scheduled(hakios_metal_cb *cb);
 enum hakios_metal_status hakios_metal_cb_status(hakios_metal_cb *cb);
 /* why it ended in HAKIOS_METAL_ERROR, or "" */
 const char *hakios_metal_cb_error(hakios_metal_cb *cb);
