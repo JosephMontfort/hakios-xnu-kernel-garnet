@@ -900,6 +900,79 @@ micros(uint64_t absolute)
 	return absolute * timebase.numer / timebase.denom / 1000;
 }
 
+/*
+ * The reader thread does not write the log itself: a write(2) to the console that blocks (a busy system, a full pipe)
+ * held the next read with it. Its "tl: i" lines go into a ring that a thread of their own writes out every 50 ms, and
+ * what it saw is summed up every 5 s, touch_lat=1 or not: "hakios: input: 5 s: ..." -- samples, how late they were read
+ * after the kernel stamped them, the longest gap between two reads, lines the ring had no room for.
+ */
+#define TL_RING 1024
+static struct tl_line { uint32_t type; uint64_t posted, read, sent; } tl_ring[TL_RING];
+static uint32_t tl_head, tl_tail, tl_dropped;           /* head: the reader's; tail: the writer's */
+static uint32_t st_samples, st_late, st_lag_max_us, st_gap_max_us, st_sum_lag_us;
+
+static void
+input_note(const struct hakios_touch *t, uint64_t read_at, uint64_t last_read_at)
+{
+	uint64_t lag = read_at > t->time ? micros(read_at - t->time) : 0, gap = last_read_at ? micros(read_at - last_read_at) : 0;
+	uint32_t head = __atomic_load_n(&tl_head, __ATOMIC_RELAXED);
+
+	__atomic_add_fetch(&st_samples, 1, __ATOMIC_RELAXED);
+	__atomic_add_fetch(&st_sum_lag_us, (uint32_t)(lag > 1000000 ? 1000000 : lag), __ATOMIC_RELAXED);
+	if (lag > 50000) {
+		__atomic_add_fetch(&st_late, 1, __ATOMIC_RELAXED);
+	}
+	if (lag > __atomic_load_n(&st_lag_max_us, __ATOMIC_RELAXED)) {
+		__atomic_store_n(&st_lag_max_us, (uint32_t)lag, __ATOMIC_RELAXED);
+	}
+	if (gap < 10000000 && gap > __atomic_load_n(&st_gap_max_us, __ATOMIC_RELAXED)) {
+		__atomic_store_n(&st_gap_max_us, (uint32_t)gap, __ATOMIC_RELAXED);
+	}
+	if (!touch_latency) {
+		return;
+	}
+	if (head - __atomic_load_n(&tl_tail, __ATOMIC_ACQUIRE) >= TL_RING) {
+		__atomic_add_fetch(&tl_dropped, 1, __ATOMIC_RELAXED);
+		return;
+	}
+	tl_ring[head % TL_RING] = (struct tl_line){ t->type, micros(t->time), micros(read_at), micros(mach_absolute_time()) };
+	__atomic_store_n(&tl_head, head + 1, __ATOMIC_RELEASE);
+}
+
+static void *
+input_log_thread(__unused void *arg)
+{
+	unsigned ticks = 0;
+
+	pthread_setname_np("redwood input log");
+	for (;;) {
+		uint32_t head = __atomic_load_n(&tl_head, __ATOMIC_ACQUIRE), tail = tl_tail;
+
+		for (; tail != head; tail++) {
+			struct tl_line *l = &tl_ring[tail % TL_RING];
+
+			say("tl: i %u posted %llu read %llu sent %llu\n", l->type, l->posted, l->read, l->sent);
+		}
+		__atomic_store_n(&tl_tail, tail, __ATOMIC_RELEASE);
+		if (++ticks % 100 == 0) {       /* 5 s */
+			uint32_t n = __atomic_exchange_n(&st_samples, 0, __ATOMIC_RELAXED);
+			uint32_t late = __atomic_exchange_n(&st_late, 0, __ATOMIC_RELAXED);
+			uint32_t lag = __atomic_exchange_n(&st_lag_max_us, 0, __ATOMIC_RELAXED);
+			uint32_t gap = __atomic_exchange_n(&st_gap_max_us, 0, __ATOMIC_RELAXED);
+			uint32_t sum = __atomic_exchange_n(&st_sum_lag_us, 0, __ATOMIC_RELAXED);
+			uint32_t dropped = __atomic_exchange_n(&tl_dropped, 0, __ATOMIC_RELAXED);
+
+			if (n != 0 || dropped != 0) {
+				say("hakios: input: 5 s: %u samples, read %u us after posted on average, at most %u us; %u over 50 ms; "
+				    "longest gap between reads %u ms; %u log lines dropped\n", n, n ? sum / n : 0, lag, late, gap / 1000,
+				    dropped);
+			}
+		}
+		usleep(50000);
+	}
+	return NULL;
+}
+
 static void *
 input_thread(__unused void *arg)
 {
@@ -951,6 +1024,14 @@ input_thread(__unused void *arg)
 		return NULL;
 	}
 
+	{
+		pthread_t logger;
+
+		if (pthread_create(&logger, NULL, input_log_thread, NULL) == 0) {
+			pthread_detach(logger);
+		}
+	}
+	uint64_t last_read_at = 0;
 	while (read(device, &t, sizeof(t)) == (ssize_t)sizeof(t)) {
 		uint64_t read_at = mach_absolute_time();
 
@@ -978,11 +1059,9 @@ input_thread(__unused void *arg)
 			}
 		} else {
 			send_touch(screen, &t);
-			if (touch_latency) {
-				say("tl: i %u posted %llu read %llu sent %llu\n", t.type, micros(t.time), micros(read_at),
-				    micros(mach_absolute_time()));
-			}
+			input_note(&t, read_at, last_read_at);
 		}
+		last_read_at = read_at;
 	}
 	say("hakios: input: %s: %s\n", HAKIOS_TOUCH_DEVICE, strerror(errno));
 	return NULL;

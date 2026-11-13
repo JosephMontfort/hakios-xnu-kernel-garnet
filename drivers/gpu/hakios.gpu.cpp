@@ -59,9 +59,10 @@ uint32_t hakios_gpu_submit(const uint64_t * addresses, const uint32_t * words, u
 extern uint32_t gpu_log;
 extern uint32_t gDetLog;
 
+/* (gpu_log=1 too: the five-second "HakiosGPU: N submissions" line into the log fetched over USB) */
 #define IOLog(...) do { \
 	(IOLog)(__VA_ARGS__); \
-	if (gDetLog) { \
+	if (gDetLog || gpu_log) { \
 		printf(__VA_ARGS__); \
 	} \
 } while (0)

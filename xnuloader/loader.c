@@ -997,6 +997,10 @@ static const struct kernel_live *running_live;
  * running_live is NULL for a kernel without one, so it cannot say that a kernel is running.
  */
 static int run_active;
+/* what the USB side did during a run, for the log: a host whose fetches stop says nothing on its own */
+static uint32_t usb_commands, usb_state_changes, usb_given_up;
+static uint64_t usb_last_command_at;
+static int usb_connected;
 static uint64_t running_slide;
 static void usb_poll_command(void);
 
@@ -2378,6 +2382,17 @@ run_on_other_cpu(uint64_t mpidr, uint64_t entry, uint64_t boot_args_pa, const st
 		 * After that this core only watches: no interrupts (the kernel reprograms the interrupt
 		 * controller's shared half; UEFI's handlers had better not run on top of that for long).
 		 */
+		/* after that, a line every 30 s (no storage, no interrupts needed): the loader's part of the log goes on */
+		if (watching_only && arrived && seconds_since(started) >= noted + 30) {
+			noted = seconds_since(started);
+			if (live != NULL) {
+				flush_dcache(live->log_len + slide, live->log_len + slide + 4);
+			}
+			print("%d s: the kernel has logged %d bytes, heartbeat %d; usb %s, %d commands, last %d s ago\n", noted,
+			    live != NULL ? (uint64_t)*(volatile uint32_t *)(live->log_len + slide) : 0,
+			    live != NULL ? (uint64_t)live->heartbeat : 0, usb_connected ? "connected" : "NOT connected",
+			    (uint64_t)usb_commands, usb_last_command_at ? seconds_since(usb_last_command_at) : (uint64_t)0);
+		}
 		if (!watching_only && seconds_since(started) >= NOTE_SECONDS) {
 			watching_only = 1;
 			daif = READ_SYSREG(DAIF);
@@ -3681,7 +3696,6 @@ run_kernel(int have_checkpoint, uint64_t checkpoint)
 static usb_device_protocol *USB;
 static int download_to_ramdisk;     /* set by "oem ramdisk" for the one download that follows */
 static uint8_t *usb_rx_buf, *usb_tx_buf;
-static int usb_connected;
 
 static const uint8_t usb_dev_desc[18] = { 18, 1, 0x10, 0x02, 0, 0, 0, 64, 0xd1, 0x18, 0x0d, 0xd0, 0x00, 0x01, 1, 2, 3, 1 };
 static const uint8_t usb_ss_dev_desc[18] = { 18, 1, 0x00, 0x03, 0, 0, 0, 9, 0xd1, 0x18, 0x0d, 0xd0, 0x00, 0x01, 1, 2, 3, 1 };
@@ -3785,10 +3799,18 @@ usb_wait(uint8_t endpoint)
 		USB->handle_event(&msg, &size, &data);
 		if (msg == UsbDeviceEventDeviceStateChange) {
 			usb_connected = (data.device_state == UsbDeviceStateConnected);
+			if (run_active && usb_state_changes++ < 64) {
+				print("usb: state %d (%s) in a transfer on endpoint %x, at %d s\n", (uint64_t)data.device_state,
+				    usb_connected ? "connected" : "not connected", (uint64_t)endpoint, READ_SYSREG(CNTVCT_EL0) / freq);
+			}
 			return -1;
 		}
 		/* with a kernel running, a host that went away must not keep this core from watching it */
 		if (run_active && READ_SYSREG(CNTVCT_EL0) - began > (in_upload ? 60 : 3) * freq) {
+			if (usb_given_up++ < 64) {
+				print("usb: transfer on endpoint %x given up after %d s%s, at %d s\n", (uint64_t)endpoint,
+				    (uint64_t)(in_upload ? 60 : 3), in_upload ? " (upload)" : "", READ_SYSREG(CNTVCT_EL0) / freq);
+			}
 			return -1;
 		}
 		if (usb_data_timeout != 0 && READ_SYSREG(CNTVCT_EL0) - began > usb_data_timeout * freq) {
@@ -4001,6 +4023,9 @@ fb_command(char *cmd)
 			if (sent == staged_len) {
 				fb_reply("OKAY", "");
 			} else {
+				if (run_active) {
+					print("usb: upload cut at %d of %d bytes\n", sent, staged_len);
+				}
 				fb_reply("FAIL", "short upload");
 			}
 		} else if (starts_with(cmd, "oem screenshot")) {
@@ -4093,13 +4118,27 @@ usb_poll_command(void)
 	if (USB == NULL) {
 		return;         /* this run was not started over USB */
 	}
-	if (!usb_rx_queued && usb_connected && !EFI_ERROR(USB->send(USB_EP_OUT, 511, usb_rx_buf))) {
-		usb_rx_queued = 1;
+	/*
+	 * Marked not connected (a state change to anything but Connected: a host that suspended its port, say), the
+	 * receive used to wait for the next state change, and if none came no command was ever taken again. Every 2 s
+	 * it is offered anyway: a command that arrives says the host is there.
+	 */
+	static uint64_t last_offer;
+	uint64_t now = READ_SYSREG(CNTVCT_EL0), freq = READ_SYSREG(CNTFRQ_EL0);
+	if (!usb_rx_queued && (usb_connected || now - last_offer > 2 * freq)) {
+		last_offer = now;
+		if (!EFI_ERROR(USB->send(USB_EP_OUT, 511, usb_rx_buf))) {
+			usb_rx_queued = 1;
+		}
 	}
 	USB->handle_event(&msg, &size, &data);
 	if (msg == UsbDeviceEventDeviceStateChange) {
 		usb_connected = (data.device_state == UsbDeviceStateConnected);
 		usb_rx_queued = 0;
+		if (usb_state_changes++ < 64) {
+			print("usb: state %d (%s) at %d s, %d commands so far\n", (uint64_t)data.device_state,
+			    usb_connected ? "connected" : "not connected", now / freq, (uint64_t)usb_commands);
+		}
 		return;
 	}
 	if (msg != UsbDeviceEventTransferNotification || data.transfer.endpoint_index != USB_EP_OUT) {
@@ -4109,6 +4148,12 @@ usb_poll_command(void)
 	if (data.transfer.status != UsbDeviceTransferStatusCompleteOK || data.transfer.bytes_completed == 0) {
 		return;
 	}
+	if (!usb_connected) {
+		print("usb: a command arrived while marked not connected, at %d s: connected again\n", now / freq);
+		usb_connected = 1;
+	}
+	usb_commands++;
+	usb_last_command_at = now;
 	n = data.transfer.bytes_completed < sizeof(cmd) - 1 ? data.transfer.bytes_completed : sizeof(cmd) - 1;
 	memcpy(cmd, usb_rx_buf, (size_t)n);
 	cmd[n] = 0;

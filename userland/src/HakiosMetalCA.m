@@ -6269,8 +6269,10 @@ hm_completed(hakios_metal_cb *cb, void *context)
 			lines = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "touch_lat=1") != NULL;
 		}
 		if (lines) {
-			fprintf(stderr, "tl: M made %.0f committed %.0f done %.0f gpu %.0f\n", [self hakiosCreatedAt] * 1e6,
-				[self GPUStartTime] * 1e6, hm_now() * 1e6, (double)hakios_metal_cb_gpu_nanoseconds(cb) / 1e3);
+			/* (and whose: which client's command buffers clog the one GPU queue) */
+			fprintf(stderr, "tl: M made %.0f committed %.0f done %.0f gpu %.0f by %s %d\n", [self hakiosCreatedAt] * 1e6,
+				[self GPUStartTime] * 1e6, hm_now() * 1e6, (double)hakios_metal_cb_gpu_nanoseconds(cb) / 1e3,
+				getprogname(), (int)getpid());
 		}
 	}
 	hm_fps_note(NO, (double)hakios_metal_cb_gpu_nanoseconds(cb) / 1e9, hm_now() - [self GPUStartTime], cb);
