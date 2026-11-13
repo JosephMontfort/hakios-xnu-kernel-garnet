@@ -281,12 +281,24 @@ bool pushedRanges(const Stage& s, const Bindings& b, std::vector<PushedRange>* o
         if (r.sizeDwords == 0 || r.sizeDwords % 4 != 0) {
             return refuse(why, name() + ": a constant range of " + n(r.sizeDwords) + " dwords, not a whole number of vec4");
         }
-        if (uint64_t(r.startDword) * 4 + uint64_t(r.sizeDwords) * 4 > mapped) {
-            return refuse(why, name() + " reads " + n(r.sizeDwords * 4) + " bytes at " + n(r.startDword * 4) + " of constant buffer " + n(r.block) + "; " +
-                                   n(bytes) + " are bound and " + n(mapped) + " mapped behind the offset");
-        }
         if (r.offsetVec4 + r.sizeDwords / 4 > k.constlen) {
             return refuse(why, name() + ": constant buffer " + n(r.block) + "'s range at vec4 " + n(r.offsetVec4) + " runs past its constlen of " + n(k.constlen));
+        }
+        const uint64_t start = uint64_t(r.startDword) * 4, want = uint64_t(r.sizeDwords) * 4;
+        if (start + want > mapped) {
+            // ir3's range is padded past what the program reads (a 48-byte float3x4 is pushed as 64 bytes), and a small
+            // buffer CoreAnimation sub-allocates ends at its length: the GPU may not read the padding off the object, so
+            // the words it has are loaded direct, zeros after them -- what the shader never looks at. Refusing the draw
+            // instead left holes on the screen (Control Centre's sliders, 13 November).
+            const void* cpu = x.buffer->contents();
+            if (cpu == nullptr) {
+                return refuse(why, name() + " reads " + n(want) + " bytes at " + n(start) + " of constant buffer " + n(r.block) + "; " +
+                                       n(bytes) + " are bound and " + n(mapped) + " mapped behind the offset, which is mapped nowhere to copy from");
+            }
+            PushedRange p{r.offsetVec4, r.sizeDwords / 4, 0, std::vector<uint32_t>(r.sizeDwords, 0u)};
+            if (start < mapped) memcpy(p.words.data(), static_cast<const uint8_t*>(cpu) + x.offset + start, size_t(mapped - start));
+            out->push_back(std::move(p));
+            continue;
         }
         PushedRange p{r.offsetVec4, r.sizeDwords / 4, x.buffer->gpuAddress() + x.offset + 4ull * r.startDword, {}};
         if (p.from % 16 != 0) {

@@ -406,12 +406,21 @@ bool encodeAny(pm4::Stream& stream, const Kernel& k, const uint32_t groups[3], u
         // GPU reads the padding too, so the read must stay inside the object's pages, where nothing faults -- not
         // inside the length the program bound. Metal binds 4 bytes by -setBytes:length:atIndex: to such a kernel as
         // a matter of course (the plug-in's test on the phone, 28 October), and a refusal here failed that dispatch.
-        if (uint64_t(r.startDword) * 4 + uint64_t(r.sizeDwords) * 4 > mapped) {
-            return refuse(why, std::string(k.name) + " reads " + n(r.sizeDwords * 4) + " bytes at " + n(r.startDword * 4) + " of constant buffer " + n(r.block) +
-                                   "; " + n(bytes) + " are bound and " + n(mapped) + " mapped behind the offset");
-        }
         if (r.offsetVec4 + r.sizeDwords / 4 > k.constlen) {
             return refuse(why, std::string(k.name) + ": constant buffer " + n(r.block) + "'s range at vec4 " + n(r.offsetVec4) + " runs past its constlen");
+        }
+        const uint64_t start = uint64_t(r.startDword) * 4, want = uint64_t(r.sizeDwords) * 4;
+        if (start + want > mapped) {
+            // off the object's pages: the words it has direct, zeros after them (render.cpp: pushedRanges)
+            const void* cpu = buffers[r.block].buffer->contents();
+            if (cpu == nullptr) {
+                return refuse(why, std::string(k.name) + " reads " + n(want) + " bytes at " + n(start) + " of constant buffer " + n(r.block) +
+                                       "; " + n(bytes) + " are bound and " + n(mapped) + " mapped behind the offset, which is mapped nowhere to copy from");
+            }
+            Range g{r.offsetVec4, r.sizeDwords / 4, 0, std::vector<uint32_t>(r.sizeDwords, 0u)};
+            if (start < mapped) memcpy(g.words.data(), static_cast<const uint8_t*>(cpu) + buffers[r.block].offset + start, size_t(mapped - start));
+            ranges.push_back(std::move(g));
+            continue;
         }
         Range g{r.offsetVec4, r.sizeDwords / 4, address + 4ull * r.startDword, {}};
         if (g.from % 16 != 0) {

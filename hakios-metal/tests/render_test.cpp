@@ -2066,11 +2066,31 @@ TEST(a_draw_refuses_a_constant_range_it_cannot_serve_by_name) {
     Bindings odd;
     odd.buffers = {Binding{colour.get(), 2}};
     refusedWith(p, odd, "tri_cflat_fs_air: buffer 0: offset 2 is not a multiple of 4 inside it");
-    // the padded 64-byte range running off the object's pages: a buffer as long as its pages, bound 16 bytes before the end
-    auto page = newBuffer(*r.gpu, colour->bo().size(), &why);
-    Bindings tail;
-    tail.buffers = {Binding{page.get(), page->bo().size() - 16}};
-    refusedWith(p, tail, "tri_cflat_fs_air reads 64 bytes at 0 of constant buffer 0; 16 are bound and 16 mapped behind the offset");
+    // the padded 64-byte range running off the object's pages: served, not refused -- the 16 bytes there direct, zeros after
+    {
+        using namespace a6xx;
+        auto page = newBuffer(*r.gpu, colour->bo().size(), &why);
+        Bindings tail;
+        tail.buffers = {Binding{page.get(), page->bo().size() - 16}};
+        float* f = reinterpret_cast<float*>(static_cast<uint8_t*>(page->contents()) + page->bo().size() - 16);
+        for (int i = 0; i < 4; i++) f[i] = float(i + 1);
+        Encoded e(r, p, pass, wholeDraw(), render::Options{}, Bindings{}, tail);
+        CHECK(e.ok);
+        size_t at = e.findLoad(CP_LOAD_STATE6_FRAG, ST6_CONSTANTS, SB6_FS_SHADER);
+        CHECK(at != size_t(-1));
+        if (at != size_t(-1)) {
+            const auto& w = e.stream.words();
+            CHECK(((w[at + 1] & CP_LOAD_STATE6_0_STATE_SRC__MASK) >> CP_LOAD_STATE6_0_STATE_SRC__SHIFT) == SS6_DIRECT);
+            const uint32_t units = (w[at + 1] & CP_LOAD_STATE6_0_NUM_UNIT__MASK) >> CP_LOAD_STATE6_0_NUM_UNIT__SHIFT;
+            CHECK_EQ(units, 4u);
+            if (units == 4u && at + 4 + 16 <= w.size()) {   // header, dword 0, the two (unused) address words, then the data
+                float first;
+                memcpy(&first, &w[at + 4], 4);
+                CHECK_EQ(first, 1.0f);
+                CHECK_EQ(w[at + 4 + 4], 0u);   // past the object: zeros
+            }
+        }
+    }
     // a range past the stage's constlen (the twin of the constlen the fixture carries)
     Program short_ = p;
     short_.fs.k.constlen = 0;
