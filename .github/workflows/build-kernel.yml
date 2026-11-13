@@ -206,7 +206,8 @@ jobs:
             -framework Foundation -framework IOKit -framework IOSurface -framework Metal -lobjc \
             -DHAKIOS_METAL_GPU -Ihakios-metal/include \
             -o out/metal/RedwoodMetal userland/src/HakiosMetalCA.m userland/src/HakiosMetalAlias.m \
-            hakios-metal/out/ios/libhakios-metal.a $MESA_LIBS -lc++ -lz -lm
+            hakios-metal/out/ios/libhakios-metal.a $MESA_LIBS -lc++ -lz -lm \
+            -Wl,-U,_native_bridge_metal_open -Wl,-U,_native_bridge_metal_first_problem -Wl,-U,_native_bridge_metal_status -Wl,-U,_native_bridge_metal_formats -Wl,-U,_native_bridge_metal_variant_hook  # UniXNU's m2v bridge (weak, not linked here: NULL)
           llvm-nm out/metal/RedwoodMetal | grep -E 'OBJC_CLASS_\$_(HakiosMetalDevice|RedwoodMetalDevice)$'
           [ "$(llvm-nm out/metal/RedwoodMetal | grep -E '_OBJC_CLASS_\$_(HakiosMetalDevice|RedwoodMetalDevice)$' | grep -vc ' U ')" = 2 ] || {
             echo "::error::the plug-in does not define both HakiosMetalDevice and RedwoodMetalDevice"; exit 1; }

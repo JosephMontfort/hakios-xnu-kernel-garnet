@@ -299,7 +299,8 @@ if [ -d $DARWIN/rootfs/usr/lib ]; then
 			# also wants QuartzCore's default.metallib (tools/ca-metallib.py, EXTRA_SHARE=, boot-arg ca_metallib=)
 			echo "build.sh: HakiosMetal for CoreAnimation (src/HakiosMetalCA.m)"
 			# M2V=1: with UniXNU's Metal on Vulkan inside, the device boot-arg metal_m2v=1 gives the window server
-			M2V_OBJS=
+			# (without it, its weak-imported entry points stay undefined: NULL at run time)
+			M2V_OBJS="-Wl,-U,_native_bridge_metal_open -Wl,-U,_native_bridge_metal_first_problem -Wl,-U,_native_bridge_metal_status -Wl,-U,_native_bridge_metal_formats -Wl,-U,_native_bridge_metal_variant_hook"
 			if [ -n "${M2V:-}" ] && [ -f ../xnu-deps/build/m2v/out/frontend.o ]; then
 				M2V_OBJS="../xnu-deps/build/m2v/out/frontend.o ../xnu-deps/build/m2v/out/libadreno_metal_bridge.a -framework CoreFoundation -lc++ -Wl,-dead_strip"
 				echo "build.sh: with UniXNU's Metal on Vulkan (metal_m2v=1)"
