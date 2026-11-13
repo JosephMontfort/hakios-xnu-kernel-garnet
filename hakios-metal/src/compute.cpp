@@ -58,6 +58,25 @@ void event(pm4::Stream& st, vgt_event_type e) {
 
 // an event that writes VALUE to ADDRESS when it has completed: how the GPU says the caches are flushed
 void eventTimestamp(pm4::Stream& st, vgt_event_type e, uint64_t address, uint32_t value, bool timestampBit) {
+    if (pm4::isA7xx()) {
+        // The A7xx (garnet's Adreno 710) has CP_EVENT_WRITE7: the 4-word form writes nothing unless WRITE_ENABLED (bit 27)
+        // is set, and the A6xx's *_TS flushes are gone (Mesa 25.0.7 freedreno_gpu_event.h, fd_gpu_events<A7XX>). Without
+        // this every wait for the value spun for ever: 13 November, 22 resets, no CoreAnimation buffer ever done. So: the
+        // A7xx's own clean (no write), then the write as the kernel's fence does it on this GPU (CACHE_CLEAN | bit 27), or
+        // RB_DONE_TS with it (turnip's A7XX form); WRITE_SRC USER_32B, WRITE_DST RAM (both 0). TIMESTAMP is not a bit here.
+        uint32_t signal = a7xx::A7XX_CACHE_CLEAN;
+        switch (uint32_t(e)) {
+            case PC_CCU_FLUSH_COLOR_TS: event(st, vgt_event_type(a7xx::A7XX_CCU_CLEAN_COLOR)); break;
+            case PC_CCU_FLUSH_DEPTH_TS: event(st, vgt_event_type(a7xx::A7XX_CCU_CLEAN_DEPTH)); break;
+            case PC_CCU_RESOLVE_TS: event(st, vgt_event_type(a7xx::A7XX_CCU_RESOLVE_CLEAN)); break;
+            case RB_DONE_TS: signal = RB_DONE_TS; break;
+            default: break;   // CACHE_FLUSH_TS / CACHE_FLUSH7: the CACHE_CLEAN that signals is the flush
+        }
+        (void)timestampBit;
+        uint32_t w[4] = {signal | a7xx::A7XX_EVENT_WRITE_ENABLED, uint32_t(address), uint32_t(address >> 32), value};
+        st.packet(CP_EVENT_WRITE, w, 4);
+        return;
+    }
     uint32_t w[4] = {eventWrite0(e, timestampBit), uint32_t(address), uint32_t(address >> 32), value};
     st.packet(CP_EVENT_WRITE, w, 4);
 }
@@ -70,6 +89,11 @@ void waitForWord(pm4::Stream& st, uint64_t address, uint32_t value) {
 
 // ... or until it is at least VALUE
 void waitForWordAtLeast(pm4::Stream& st, uint64_t address, uint32_t value) {
+    if (pm4::isA7xx()) {   // CP_WAIT_MEM_GTE is A6XX only (adreno_pm4.xml): CP_WAIT_REG_MEM's >= instead
+        uint32_t w[6] = {waitRegMem0(WRITE_GE, POLL_MEMORY), uint32_t(address), uint32_t(address >> 32), value, ~0u, kDelayLoopCycles};
+        st.packet(CP_WAIT_REG_MEM, w, 6);
+        return;
+    }
     uint32_t w[4] = {0, uint32_t(address), uint32_t(address >> 32), value};
     st.packet(CP_WAIT_MEM_GTE, w, 4);
 }

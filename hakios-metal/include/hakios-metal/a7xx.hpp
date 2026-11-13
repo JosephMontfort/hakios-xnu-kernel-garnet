@@ -102,6 +102,9 @@ enum a7xx_vgt_event_type : uint32_t {
     A7XX_CACHE_INVALIDATE7 = 0x33,         // 51 (A7xx cache invalidate, vs A6xx 49)
     A7XX_SUBPASS_FENCE = 0x35,             // 53
 };
+// CP_EVENT_WRITE7_0.WRITE_ENABLED (adreno_pm4.xml): the 4-word event writes its payload only with this bit
+inline constexpr uint32_t A7XX_EVENT_WRITE_ENABLED = 1u << 27;
+
 
 // --- Proven Adreno 710 Magic Register Values (tools/mesa/adreno-710.patch:8-58) -------------------------------------
 struct RegVal {

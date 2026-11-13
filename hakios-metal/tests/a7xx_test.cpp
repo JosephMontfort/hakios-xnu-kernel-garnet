@@ -221,3 +221,47 @@ TEST(a7xx_render_stream_emission) {
     CHECK(foundA7xxMagicReg);
     CHECK(foundA7xxRawMagicReg);
 }
+
+// 13 November, garnet: every CoreAnimation buffer hung on a wait for a value an A6xx-form 4-word CP_EVENT_WRITE never
+// wrote (the A7xx writes only with WRITE_ENABLED), and CP_WAIT_MEM_GTE is A6XX only. On the A7xx a pass's stream has
+// neither: every 4-word event has bit 27 and no A6xx *_TS event, and no CP_WAIT_MEM_GTE.
+TEST(a7xx_events_write_and_waits_are_a7xx) {
+    auto fake = std::make_unique<FakeGpu>();
+    Gpu gpu(std::move(fake));
+    TextureDesc desc{};
+    desc.format = PixelFormat::kRGBA8Unorm;
+    desc.width = 64;
+    desc.height = 64;
+    desc.usage = kTextureUsageRenderTarget;
+    std::string why;
+    auto tex = Texture::make(gpu, desc, &why);
+    CHECK(tex != nullptr);
+    RenderPass pass{};
+    pass.color0 = tex.get();
+    pass.load = LoadAction::kClear;
+    pass.store = StoreAction::kStore;
+    uint8_t tableCpu[render::kTableBytes] = {};
+    pm4::setA7xx(true);
+    pm4::Stream s;
+    render::Options o{};
+    o.generation = ChipGeneration::kA7xx;
+    CHECK(render::encodeBegin(s, pass, 0x10000, tableCpu, &why, o));
+    render::encodeEnd(s, pass, 0x10000, o);
+    pm4::setA7xx(false);
+    uint32_t written = 0;
+    for (size_t i = 0; i < s.words().size();) {
+        pm4::Header h = pm4::decode(s.words()[i]);
+        CHECK(h.kind != pm4::Header::kBad);
+        if (h.kind == pm4::Header::kCommand) {
+            CHECK(h.opcode != a6xx::CP_WAIT_MEM_GTE);
+            if (h.opcode == a6xx::CP_EVENT_WRITE && h.count == 4) {
+                const uint32_t w0 = s.words()[i + 1], e = w0 & 0xff;
+                CHECK((w0 & a7xx::A7XX_EVENT_WRITE_ENABLED) != 0);
+                CHECK(e == a7xx::A7XX_CACHE_CLEAN || e == a6xx::RB_DONE_TS);
+                written++;
+            }
+        }
+        i += 1 + h.count;
+    }
+    CHECK(written > 0);
+}

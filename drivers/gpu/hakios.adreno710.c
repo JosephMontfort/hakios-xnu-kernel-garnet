@@ -4518,6 +4518,65 @@ hakios_gpu_submit(const uint64_t *addresses, const uint32_t *words, uint32_t cou
 	return gpu_fence;
 }
 
+/*
+ * The physical page behind ADDRESS in SPACE, or 0: a walk of the tables as they are, making nothing (space_next makes
+ * a table where there is none; this must not).
+ */
+static uint64_t
+space_phys(const struct gpu_space *space, uint64_t address)
+{
+	uint64_t entry;
+	const uint64_t *table = space->root;
+
+	for (int shift = 30; table != NULL; shift -= 9) {
+		entry = table[address >> shift & 0x1ff];
+		if ((entry & 1) == 0) {
+			return 0;
+		}
+		if (shift == 12) {
+			return (entry & PTE_ADDRESS) | (address & 0xfff);
+		}
+		const uint64_t *next = NULL;
+		for (uint32_t i = 0; i < space->table_count; i++) {
+			if (space->tables[i].phys == (entry & PTE_ADDRESS)) {
+				next = space->tables[i].table;
+				break;
+			}
+		}
+		table = next;
+	}
+	return 0;
+}
+
+/*
+ * The words of a command buffer around where the command processor has stopped in it (CP_IB1_BASE is where it fetches
+ * next; with its prefetch the packet it is stuck on is a few words behind): so that a hang names its packet. A page is
+ * mapped for it each time (a hang is rare, and the mapping is kept for the next one in the same page).
+ */
+static void
+report_words(const char *which, uint64_t at)
+{
+	static uint64_t mapped_page;
+	static const volatile uint32_t *mapped;
+	char line[24 * 12];
+	int n = 0;
+
+	at &= ~3ull;
+	for (uint64_t a = at >= 64 ? at - 64 : 0; a < at + 16 && n < (int)sizeof(line) - 12; a += 4) {
+		uint64_t phys = space_phys(&core_space, a);
+		if (phys == 0) {
+			n += snprintf(line + n, sizeof(line) - n, " ?");
+			continue;
+		}
+		if ((phys & ~0xfffull) != mapped_page || mapped == NULL) {
+			mapped = (const volatile uint32_t *)ml_io_map(phys & ~0xfffull, 4096);
+			mapped_page = phys & ~0xfffull;
+		}
+		n += snprintf(line + n, sizeof(line) - n, "%s%08x", a == at ? " >" : " ", mapped[(phys & 0xfff) / 4]);
+	}
+	printf("adreno: gpu:   %s's words from %#llx (> is where it fetches next):%s\n", which, at >= 64 ? at - 64 : 0, line);
+}
+
 /* A submission does not come back: what the 3D core and its SMMU context say. */
 void
 hakios_gpu_report(const char *why)
@@ -4533,6 +4592,12 @@ hakios_gpu_report(const char *why)
 	printf("adreno: gpu:   in the first command buffer at %#llx, %u words to go; in the second at %#llx, %u to go\n",
 	    (uint64_t)rd(gpu.base + CP_IB1_BASE + 4) << 32 | rd(gpu.base + CP_IB1_BASE), rd(gpu.base + CP_IB1_REM_SIZE),
 	    (uint64_t)rd(gpu.base + CP_IB2_BASE + 4) << 32 | rd(gpu.base + CP_IB2_BASE), rd(gpu.base + CP_IB2_REM_SIZE));
+	if (rd(gpu.base + CP_IB1_BASE) | rd(gpu.base + CP_IB1_BASE + 4)) {
+		report_words("the first command buffer", (uint64_t)rd(gpu.base + CP_IB1_BASE + 4) << 32 | rd(gpu.base + CP_IB1_BASE));
+	}
+	if (rd(gpu.base + CP_IB2_BASE) | rd(gpu.base + CP_IB2_BASE + 4)) {
+		report_words("the second command buffer", (uint64_t)rd(gpu.base + CP_IB2_BASE + 4) << 32 | rd(gpu.base + CP_IB2_BASE));
+	}
 	step = 0;
 	if (space_faulted(&core_space)) {
 		wr(smmu.base + context + SMMU_CB_FSR, SMMU_FSR_ALL);    /* so that the next one shows */
