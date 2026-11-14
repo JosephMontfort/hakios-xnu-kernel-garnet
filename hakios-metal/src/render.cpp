@@ -2895,8 +2895,11 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         options.generation = ChipGeneration::kA7xx;
     }
     if (options.generation == ChipGeneration::kA7xx) {
-        // GMEM tiles on the A7xx (encodeGmem's A7xx layout: RB_CCU_CNTL2, RB_UNKNOWN_8812 0, RB_BLIT_CLEAR_MODE) only
-        // where metal_gmem=1 asks; the binning pass (VSC streams, CP_SET_BIN_DATA5) is not checked on this GPU: off
+        // No GMEM tiles on the A7xx: every pass is drawn in sysmem (fd6_emit_sysmem_prep's path). The userland turns GMEM
+        // on by default (metal_gmem_draws=56, redwood's A6xx tuning), so this is the only gate. With it lifted (14
+        // November) encodeGmem's A7xx layout (RB_CCU_CNTL2, RB_UNKNOWN_8812 0, RB_BLIT_CLEAR_MODE) hung the 3D core on
+        // every boot, with or without metal_gmem=1: 14-17 resets each, only while passes of 28+ draws went to GMEM
+        options.gmem = false;
         options.gmemBinning = false;
     }
     // A compressed texture whose rows this processor changed since the GPU last copied them in (Texture::staging): the

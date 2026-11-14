@@ -338,7 +338,7 @@ jobs:
           - userland/root.apfs                : Root filesystem, rebuilt by this run (Metal plug-in, Mesa, LaunchDaemons)
           - userland/root.apfs.manifest       : Its file list with md5s
           - BUILD-INFO.txt                    : Commits this was built from, md5 of every file
-          Boot options 6-9, b, g and d in garnet-boot.sh boot with Metal (see bootargs.md).
+          Boot options 6-9, b and d in garnet-boot.sh boot with Metal (see bootargs.md).
           - userland/put system.apfs here.txt : Instructions for iOS system ramdisk
 
           Quick Boot Instructions:
