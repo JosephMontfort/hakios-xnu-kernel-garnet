@@ -3,6 +3,7 @@ ADRENO_BLIND	arg	adreno_blind	GPU and display	k	hakios.adreno.c,hakios.adreno710
 ADRENO_BW	arg	adreno_bw	User space	k	hakios.adreno710.c	
 ADRENO_DIRTY	arg	adreno_dirty	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	
 ADRENO_FINE	arg	adreno_fine	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	the newest step waits like that before every single access
+ADRENO_HBB	arg	adreno_hbb	User space	k	hakios.adreno710.c	Garnet: the highest bank bit the GPU's NC_MODE registers and Mesa's HIGHEST_BANK_BIT use (13..16; default 14, the phone's LPDDR4X)
 ADRENO_KEEP	arg	adreno_keep	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	
 ADRENO_ONLY	arg	adreno_only	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	step K alone (what steps 6 to 10 need, they check for themselves: within one session of the loader, power and clocks stay as an earlier run left them)
 ADRENO_PAUSE	arg	adreno_pause	GPU and display	k	hakios.adreno.c,hakios.adreno710.c	how long the newest step waits after announcing a group of accesses (default 2200)
