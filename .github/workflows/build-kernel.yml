@@ -212,6 +212,9 @@ jobs:
           [ "$(llvm-nm out/metal/RedwoodMetal | grep -E '_OBJC_CLASS_\$_(HakiosMetalDevice|RedwoodMetalDevice)$' | grep -vc ' U ')" = 2 ] || {
             echo "::error::the plug-in does not define both HakiosMetalDevice and RedwoodMetalDevice"; exit 1; }
           ls -l out/metal/RedwoodMetal
+          # the service stub launchd starts for the lookups garnet's widgets retry (com.redwood.svcstub.plist)
+          xnu-clang -arch arm64 -isysroot "$SDK" -O2 -o out/metal/sleepd_stub userland/src/sleepd_stub.c
+          ls -l out/metal/sleepd_stub
 
       - name: Assemble root.apfs (device image + this build's Metal plug-in and Mesa)
         run: |
@@ -222,6 +225,8 @@ jobs:
             --plugin out/metal/RedwoodMetal \
             --plugin-plist userland/src/RedwoodMetal-garnet.plist \
             --osmesa xnu-deps/build/mesa/out/libOSMesa.8.dylib \
+            --file out/metal/sleepd_stub=/bin/sleepd_stub \
+            --file userland/src/com.redwood.svcstub.plist=/LaunchDaemons/com.redwood.svcstub.plist \
             --manifest out/root/root.apfs.manifest
           # an APFS container the kernel's reader takes: the superblock's magic, one volume, every checksum good
           python3 tools/apfs/apfs.py info out/root/root.apfs
@@ -269,6 +274,8 @@ jobs:
           if [ -f devices/garnet/garnet-boot.bat ]; then
             cp devices/garnet/garnet-boot.bat dist/payload/
           fi
+          # the boot arguments the menu's options use, each explained
+          cp devices/garnet/bootargs.md dist/payload/bootargs.md
           if [ -f xl ]; then
             cp xl dist/payload/
             chmod +x dist/payload/xl
@@ -322,6 +329,7 @@ jobs:
           - garnet-boot.img                   : Bootable UEFI + resident loader image
           - garnet-boot.sh                    : Linux and Termux interactive boot manager
           - garnet-boot.bat / .ps1            : Windows boot manager
+          - bootargs.md                       : Every boot argument the menu's options use, what each value does
           - xl / xl.ps1                       : Host fastboot communication CLI
           - prebuilt/mach.development.bcm2837 : XNU Kernel with Garnet drivers
           - prebuilt/loader.efi               : Standalone resident XNU loader
@@ -330,7 +338,7 @@ jobs:
           - userland/root.apfs                : Root filesystem, rebuilt by this run (Metal plug-in, Mesa, LaunchDaemons)
           - userland/root.apfs.manifest       : Its file list with md5s
           - BUILD-INFO.txt                    : Commits this was built from, md5 of every file
-          Boot option 6 in garnet-boot.sh boots with Metal (metal=1 metal_all=1 ca_metallib=...).
+          Boot options 6-9, b, g and d in garnet-boot.sh boot with Metal (see bootargs.md).
           - userland/put system.apfs here.txt : Instructions for iOS system ramdisk
 
           Quick Boot Instructions:

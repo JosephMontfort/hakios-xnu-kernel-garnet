@@ -2,13 +2,15 @@
 # Rebuild garnet's root.apfs (md1, mounted at /redwood) from the device repo's image with this build's files in it.
 #
 # usage: tools/garnet-root-apfs.sh BASE.apfs OUT.apfs [--plugin BINARY] [--plugin-plist PLIST] [--osmesa DYLIB]
-#                                  [--manifest FILE]
+#                                  [--file SRC=PATH]... [--manifest FILE]
 #
 #   --plugin        hakios-metal's Metal plug-in (userland/src/HakiosMetalCA.m + HakiosMetalAlias.m), installed as
 #                   lib/RedwoodMetal.bundle/RedwoodMetal: the bundle the system image links from
 #                   /System/Library/Extensions/RedwoodMetal.bundle, and the one the kernel names (MetalPluginName)
 #   --plugin-plist  its Info.plist (userland/src/RedwoodMetal-garnet.plist)
 #   --osmesa        Mesa's libOSMesa.8.dylib (tools/mk-mesa.sh), as lib/libOSMesa.8.dylib: the GL bridge's library
+#   --file          SRC installed at PATH in the image (mode 755 if SRC is executable, else 644; may repeat): the
+#                   service stub (userland/src/sleepd_stub.c) and its launchd job
 #   --manifest      write OUT's file list with sizes and md5s here
 #
 # Everything else of BASE is kept as it is (the injected libraries, launchd's jobs, the firmware, the wallpapers).
@@ -24,12 +26,14 @@ MKAPFS="python3 $here/apfs/mkapfs.py"
 base=$1 out=$2
 shift 2
 plugin= plist= osmesa= manifest=
+files=()
 while [ $# -gt 0 ]; do
 	case $1 in
 	--plugin) plugin=$2; shift 2 ;;
 	--plugin-plist) plist=$2; shift 2 ;;
 	--osmesa) osmesa=$2; shift 2 ;;
 	--manifest) manifest=$2; shift 2 ;;
+	--file) files+=("$2"); shift 2 ;;
 	*) echo "garnet-root-apfs.sh: unknown option $1" >&2; exit 2 ;;
 	esac
 done
@@ -70,6 +74,15 @@ if [ -n "$osmesa" ]; then
 	install -m 755 "$osmesa" "$tree/lib/libOSMesa.8.dylib"
 	replaced+=("$osmesa=/lib/libOSMesa.8.dylib")
 fi
+
+for r in "${files[@]}"; do
+	src=${r%%=*} path=${r#*=}
+	case $path in /*) ;; *) echo "garnet-root-apfs.sh: --file $r: PATH must be absolute" >&2; exit 2 ;; esac
+	mkdir -p "$tree$(dirname "$path")"
+	rm -f "$tree$path"
+	if [ -x "$src" ]; then install -m 755 "$src" "$tree$path"; else install -m 644 "$src" "$tree$path"; fi
+	replaced+=("$src=$path")
+done
 
 rm -f "$out"
 $MKAPFS -z --plain fw -o "$out" "$volname=$tree" | tail -1

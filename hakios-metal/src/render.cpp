@@ -62,6 +62,10 @@ void regs(pm4::Stream& st, uint32_t r, std::initializer_list<uint32_t> values) {
 void command1(pm4::Stream& st, uint32_t opcode, uint32_t word) { st.packet(opcode, &word, 1); }
 
 void event(pm4::Stream& st, vgt_event_type e) {
+    // A6XX's CACHE_INVALIDATE (49) is CACHE_CLEAN on the A7xx (adreno_pm4.xml; fd_gpu_events<A7XX>: FD_CACHE_INVALIDATE is
+    // CACHE_INVALIDATE7, 51): sent as 49 every framebuffer fetch's barrier cleaned and never dropped the texture caches,
+    // and the fetches read stale texels (blocky edges on CoreAnimation's blend and vibrancy layers)
+    if (e == CACHE_INVALIDATE && pm4::isA7xx()) e = vgt_event_type(a7xx::A7XX_CACHE_INVALIDATE7);
     uint32_t w = eventWrite0(e, false);
     st.packet(CP_EVENT_WRITE, &w, 1);
 }
@@ -2295,6 +2299,9 @@ bool gmemPlan(const RenderPass& pass, GmemPlan* plan, std::string* why) {
 
 bool gmemTiles(GmemPlan* plan, const uint32_t area[4]) {
     GmemPlan p = *plan;
+    // (the A7xx's bins are 64 x 32 aligned, freedreno_devices.py a7xx tile_align_w/h; the A6xx's 32 x 16)
+    const uint32_t kTileAlignW = pm4::isA7xx() ? a7xx::kTileAlignW : a6xx::kTileAlignW;
+    const uint32_t kTileAlignH = pm4::isA7xx() ? a7xx::kTileAlignH : a6xx::kTileAlignH;
     p.x0 = area[0] & ~(kTileAlignW - 1);
     p.y0 = area[1] & ~(kTileAlignH - 1);
     const uint32_t w = area[2] + 1 - p.x0, h = area[3] + 1 - p.y0;
@@ -2307,7 +2314,7 @@ bool gmemTiles(GmemPlan* plan, const uint32_t area[4]) {
     } else {
         p.cols = divUp(w, p.binW);
     }
-    uint32_t fit = kTileMaxH;
+    uint32_t fit = kTileMaxH / kTileAlignH * kTileAlignH;
     for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
         if (p.bpp[i] != 0) fit = std::min(fit, p.room[i] / (p.binW * p.bpp[i]) / kTileAlignH * kTileAlignH);
     }
@@ -2411,9 +2418,28 @@ bool gmemDrawOk(const Program& program, const RenderPass& pass, const Draw& draw
 void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& plan, uint64_t bodies, uint32_t bodyWords, uint64_t table, const Options& o,
                 uint32_t load, uint32_t store, bool fetch, uint32_t clear, const uint32_t (*clearWords)[4], uint64_t vsc) {
     const auto [W, H] = windowOf(pass);
+    const bool a7 = o.generation == ChipGeneration::kA7xx;
     // the colour cache out of the tiles' way (it is not pipelined: after a WFI, as the sysmem value is written)
     stream.waitForIdle();
-    reg(stream, REG_A6XX_RB_CCU_CNTL, rbCcuCntlGmem());
+    if (a7) {
+        // The A7xx keeps RB_CCU_CNTL static and places the caches with RB_CCU_CNTL2 (fd6_emit_ccu_cntl, gmem): depth at 0
+        // FULL, colour at the top of GMEM, an EIGHTH of the sysmem colour cache (a7xx_gen1 gmem_ccu_color_cache_fraction):
+        // 512 KiB - 64 KiB / 8 = 0x7e000, above every bin (below kGmemCcuColorOffset, 480 KiB). Then the CCUs dropped
+        // (tu_emit_cache_flush_ccu on a switch to TU_CMD_CCU_GMEM) and tu7_emit_tile_render_begin_regs: every buffer in
+        // GMEM (RB_UNKNOWN_8812 0), RB_UNKNOWN_8E06 0, the event blits clearing GMEM (RB_BLIT_CLEAR_MODE 1)
+        const uint32_t colorOffset = a7xx::kGmemSize - a7xx::kNumCcu * 64u * 1024u / 8u;
+        reg(stream, 0x88e5, ((colorOffset & 0x1fffffu) >> 12) << 23 | 3u << 21 | (colorOffset >> 21) << 2);
+        event(stream, PC_CCU_INVALIDATE_COLOR);
+        event(stream, PC_CCU_INVALIDATE_DEPTH);
+        reg(stream, 0x8812, 0);
+        reg(stream, a7xx::REG_A7XX_RB_UNKNOWN_8E06, 0);
+        reg(stream, 0x8007, 0);
+        reg(stream, 0x8110, 0x2);
+        reg(stream, 0x8e09, 0x4);
+        reg(stream, 0x88e4, 1);
+    } else {
+        reg(stream, REG_A6XX_RB_CCU_CNTL, rbCcuCntlGmem());
+    }
     // the event blit's state common to every load and store (event_blit_setup): over the render area in granules
     // (tu6_emit_blit_scissor with align), single-sampled
     const uint32_t bx1 = std::min(alignUp(plan.area[2] + 1, kGmemAlignW), alignUp(W, kGmemAlignW)) - 1;
@@ -2433,9 +2459,10 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
         regs(stream, REG_A6XX_RB_BLIT_FLAG_DST, {0, 0, 0});
         reg(stream, REG_A6XX_RB_BLIT_BASE_GMEM, plan.base[i]);
         reg(stream, REG_A6XX_RB_BLIT_INFO, rbBlitInfo(type, false));
+        if (a7) reg(stream, 0x88e4, 1);   // (emit_blit: RB_BLIT_CLEAR_MODE GMEM before each A7XX blit event)
         event(stream, BLIT);
     };
-    const uint32_t bin = binControlGmem(o.binControlLrzFeedback, plan.binW, plan.binH);
+    const uint32_t bin = a7xxBinControl(o, binControlGmem(o.binControlLrzFeedback, plan.binW, plan.binH));
     // The pipes: as fd's gmem layout groups bins (freedreno_gmem.c: tpp_y up by 2 until the rows fit the pipes, then
     // tpp_x up by 1), and each tile's place in its pipe the order the tiles are drawn in
     uint32_t tppX = 1, tppY = 1;
@@ -2570,6 +2597,7 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
                 reg(stream, REG_A6XX_RB_BLIT_BASE_GMEM, plan.base[i]);
                 reg(stream, REG_A6XX_RB_UNKNOWN_88D0, 0);
                 regs(stream, REG_A6XX_RB_BLIT_CLEAR_COLOR_DW0, {clearWords[i][0], clearWords[i][1], clearWords[i][2], clearWords[i][3]});
+                if (a7) reg(stream, 0x88e4, 1);
                 event(stream, BLIT);
             }
             // A framebuffer fetch reads GMEM through the texture caches, which still hold what the last tile's fetches
@@ -2600,7 +2628,18 @@ void encodeGmem(pm4::Stream& stream, const RenderPass& pass, const GmemPlan& pla
     eventTimestamp(stream, PC_CCU_RESOLVE_TS, table + kTableBlitFlushAt, kBlitFlushValue, false);
     waitForWord(stream, table + kTableBlitFlushAt, kBlitFlushValue);
     stream.waitForIdle();
-    reg(stream, REG_A6XX_RB_CCU_CNTL, rbCcuCntlSysmem() | (o.ccuConcurrentResolve ? A6XX_RB_CCU_CNTL_CONCURRENT_RESOLVE : 0u));
+    if (a7) {
+        // back to passStart's sysmem layout (fd6_emit_sysmem_prep's A7XX block and fd6_emit_ccu_cntl, sysmem)
+        const uint32_t colorOffset = a7xx::kNumCcu * 256u * 1024u;
+        reg(stream, 0x88e5, ((colorOffset & 0x1fffffu) >> 12) << 23 | (colorOffset >> 21) << 2);
+        event(stream, PC_CCU_INVALIDATE_COLOR);
+        event(stream, PC_CCU_INVALIDATE_DEPTH);
+        reg(stream, 0x8812, 0x3ff);
+        reg(stream, a7xx::REG_A7XX_RB_UNKNOWN_8E06, 0x00080000);
+        reg(stream, 0x88e4, 0);
+    } else {
+        reg(stream, REG_A6XX_RB_CCU_CNTL, rbCcuCntlSysmem() | (o.ccuConcurrentResolve ? A6XX_RB_CCU_CNTL_CONCURRENT_RESOLVE : 0u));
+    }
     crumb(0x999);
 }
 
@@ -2856,10 +2895,8 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
         options.generation = ChipGeneration::kA7xx;
     }
     if (options.generation == ChipGeneration::kA7xx) {
-        // GMEM tiles on the A7xx resolve through CP_EVENT_WRITE7 blits and a GMEM CCU layout (RB_CCU_CNTL2, RB_UNKNOWN_8812
-        // 0, tu7_emit_tile_render_begin_regs) this driver does not write yet: every pass is drawn in sysmem, through the
-        // CCU, which is fd6_emit_sysmem_prep's path
-        options.gmem = false;
+        // GMEM tiles on the A7xx (encodeGmem's A7xx layout: RB_CCU_CNTL2, RB_UNKNOWN_8812 0, RB_BLIT_CLEAR_MODE) only
+        // where metal_gmem=1 asks; the binning pass (VSC streams, CP_SET_BIN_DATA5) is not checked on this GPU: off
         options.gmemBinning = false;
     }
     // A compressed texture whose rows this processor changed since the GPU last copied them in (Texture::staging): the

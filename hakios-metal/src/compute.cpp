@@ -52,6 +52,10 @@ void loadDirect(pm4::Stream& st, a6xx_state_type type, uint32_t dstOff, uint32_t
 }
 
 void event(pm4::Stream& st, vgt_event_type e) {
+    // A6XX's CACHE_INVALIDATE (49) is CACHE_CLEAN on the A7xx (adreno_pm4.xml; fd_gpu_events<A7XX>: FD_CACHE_INVALIDATE is
+    // CACHE_INVALIDATE7, 51): sent as 49 every framebuffer fetch's barrier cleaned and never dropped the texture caches,
+    // and the fetches read stale texels (blocky edges on CoreAnimation's blend and vibrancy layers)
+    if (e == CACHE_INVALIDATE && pm4::isA7xx()) e = vgt_event_type(a7xx::A7XX_CACHE_INVALIDATE7);
     uint32_t w = eventWrite0(e, false);
     st.packet(CP_EVENT_WRITE, &w, 1);
 }
