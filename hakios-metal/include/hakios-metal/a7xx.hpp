@@ -23,11 +23,12 @@ inline constexpr uint32_t kGpuId = 710;                     // Marketing model (
 
 // Chip geometry facts (adreno-gpulist.h:2156-2170, freedreno_devices.py A6xxGPUInfo for FD710)
 inline constexpr uint32_t kGmemSize = 512 * 1024;           // 512 KiB GMEM (SZ_512K)
-inline constexpr uint32_t kHighestBankBit = 15;             // highest_bank_bit = 15
+inline constexpr uint32_t kHighestBankBit = 14;             // the phone's KGSL: 14 (LPDDR4X overrides the gpulist's 15)
 inline constexpr uint32_t kNumCcu = 1;                     // 1 CCU (vs 2 on A635/A660, 3 on A730)
 inline constexpr uint32_t kNumSpCores = 1;                 // 1 SP core cluster
 inline constexpr uint32_t kTileAlignW = 64;                // 64-pixel tile width alignment
 inline constexpr uint32_t kTileAlignH = 32;                // 32-pixel tile height alignment
+inline constexpr uint32_t kTileMaxW = 1024, kTileMaxH = 1024; // FD710 tile_max_w/h (freedreno_devices.py)
 inline constexpr uint32_t kNumVscPipes = 32;               // 32 VSC pipes for binning
 inline constexpr uint32_t kCsSharedMemSize = 32 * 1024;    // 32 KiB local memory (CS shared memory)
 inline constexpr uint32_t kWaveGranularity = 2;            // wave granularity 2

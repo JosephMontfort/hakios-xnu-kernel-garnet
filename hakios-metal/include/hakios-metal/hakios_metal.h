@@ -286,6 +286,16 @@ hakios_metal_program *hakios_metal_program_new_bitcode_constants(const void *vs_
  * descriptor and sample count come with it. NULL with the reason. */
 hakios_metal_program *hakios_metal_program_specialize(hakios_metal_program *base, const void *fs_bitcode, size_t fs_size,
     const hakios_metal_constant *fs_constants, unsigned fs_count, unsigned binding, const void *bytes, size_t length);
+/* ...with only the bytes whose MASK byte is nonzero compiled as values (NULL: every byte), the rest read at draw time:
+ * the program serves every content that agrees with BYTES on the masked bytes */
+hakios_metal_program *hakios_metal_program_specialize_masked(hakios_metal_program *base, const void *fs_bitcode, size_t fs_size,
+    const hakios_metal_constant *fs_constants, unsigned fs_count, unsigned binding, const void *bytes, size_t length,
+    const unsigned char *mask);
+/* Which of the first LENGTH bytes of the fragment function's constant buffer at [[buffer(BINDING)]] decide its branches
+ * (an if's, a discard's, another read's offset): MASK gets LENGTH bytes, 0xff for each such byte, 0 for the rest. The
+ * count marked, or -1 with the reason. */
+int hakios_metal_program_spec_mask(const void *fs_bitcode, size_t fs_size, const hakios_metal_constant *fs_constants,
+    unsigned fs_count, unsigned binding, unsigned length, unsigned char *mask);
 /* STAGE 0 = vertex, 1 = fragment: how many instruction words that stage compiled to */
 unsigned hakios_metal_program_stage_words(hakios_metal_program *program, unsigned stage);
 void hakios_metal_program_free(hakios_metal_program *program);
@@ -473,8 +483,9 @@ void hakios_metal_cb_set_profile(hakios_metal_cb *cb, int on);
 int hakios_metal_cb_pass_time(hakios_metal_cb *cb, unsigned i, unsigned *kind, unsigned *width, unsigned *height, unsigned *draws, double *us);
 /* what CB holds so far (CommandBuffer::counts): passes opened, draws, dispatches, copies and clears; any pointer NULL */
 void hakios_metal_cb_counts(hakios_metal_cb *cb, unsigned *passes, unsigned *draws, unsigned *dispatches, unsigned *copies, unsigned *clears);
-/* tiled rendering (render::Options::gmem) for CB's passes from now on, on by default; and of what CB holds, the passes
- * drawn in GMEM and their tiles, and pass I's tiles as profiled (0: in sysmem, -1 past them) */
+/* tiled rendering (render::Options::gmem) for CB's passes from now on, on by default (ON 2: asked for by metal_gmem=1,
+ * which the A7xx needs besides); and of what CB holds, the passes drawn in GMEM and their tiles, and pass I's tiles as
+ * profiled (0: in sysmem, -1 past them) */
 void hakios_metal_cb_set_gmem(hakios_metal_cb *cb, int on);
 /* GMEM's refinements turned off (CommandBuffer::setGmemOff's bits: 1 whole area, 2 every attachment, 4 fetch barrier) */
 void hakios_metal_cb_set_gmem_off(hakios_metal_cb *cb, unsigned bits);

@@ -130,10 +130,20 @@ using FunctionConstants = std::vector<FunctionConstant>;
 // buffer at constant offsets inside BYTES compiled as those values, so that the branches they decide are decided once,
 // here, rather than in every fragment. CoreAnimation's uber shader (fixed_frag_lph_cpf) picks its path through 15 000
 // instructions by the 52 bytes of its FragmentShaderConfig: compiled for one configuration it is 16 to 48 instructions.
+// MASK (when not empty, one byte for each of BYTES): only the reads wholly inside bytes whose mask is nonzero are
+// compiled as values (knownBufferMask's), the rest read at draw time -- so a stage compiled for one content serves
+// every content that agrees with it on the masked bytes.
 struct KnownBuffer {
     uint32_t binding = 0;
     std::vector<uint8_t> bytes;
+    std::vector<uint8_t> mask;
 };
+// Which of the first LENGTH bytes of a stage's constant buffer at [[buffer(BINDING)]] decide its branches: those a
+// read at a constant offset gives to an if's condition, a discard's or a demote's, or to another read's offset of that
+// buffer, through arithmetic and phis (not through memory, a texture or a select: a select costs no branch). MASK gets
+// LENGTH bytes, 0xff for each such byte; false with the reason. What it misses is only left to draw time.
+bool knownBufferMask(const void* bitcode, size_t size, const FunctionConstants& constants, uint32_t binding, uint32_t length,
+                     std::vector<uint8_t>* mask, std::string* why);
 std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, std::string* why, const FunctionConstants& constants = {},
                                            uint32_t iboBase = 0, const KnownBuffer* known = nullptr);
 // compileStage's choice for a stage that spilled with ir3's preamble (WITH) and was compiled again without it (WITHOUT):

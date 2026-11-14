@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <unordered_set>
 
 #ifdef HAKIOS_METAL_MESA
 // Mesa's headers carry their own C++ guards (and templates behind them: no extern "C" around these) and are not clean
@@ -34,6 +35,11 @@ std::unique_ptr<CompiledKernel> compileAir(const void*, size_t, std::string* why
 std::unique_ptr<CompiledStage> compileStage(const void*, size_t, std::string* why, const FunctionConstants&, uint32_t, const KnownBuffer*) {
     *why = "no compiler in this build: it is linked in with MESA_BUILD= (tools/compiler.mk), and was not";
     return nullptr;
+}
+
+bool knownBufferMask(const void*, size_t, const FunctionConstants&, uint32_t, uint32_t, std::vector<uint8_t>*, std::string* why) {
+    *why = "no compiler in this build: it is linked in with MESA_BUILD= (tools/compiler.mk), and was not";
+    return false;
 }
 
 std::unique_ptr<CompiledProgram> linkProgram(std::shared_ptr<CompiledStage>, std::shared_ptr<CompiledStage>, PixelFormat, std::string* why) {
@@ -278,6 +284,11 @@ bool foldKnownLoad(nir_builder* b, nir_intrinsic_instr* intr, void* data) {
     const unsigned bits = intr->def.bit_size, comps = intr->def.num_components;
     const uint64_t at = nir_src_as_uint(intr->src[1]);
     if (bits % 8 != 0 || at + uint64_t(comps) * (bits / 8) > known->bytes.size()) return false;
+    if (!known->mask.empty()) {
+        for (uint64_t i = at; i < at + uint64_t(comps) * (bits / 8); i++) {
+            if (i >= known->mask.size() || known->mask[i] == 0) return false;   // a byte read at draw time
+        }
+    }
     nir_const_value values[NIR_MAX_VEC_COMPONENTS];
     for (unsigned c = 0; c < comps; c++) {
         uint64_t v = 0;
@@ -318,6 +329,50 @@ bool translate(const void* bitcode, size_t size, Translation& t, std::string* wh
         progress = nir_shader_intrinsics_pass(t.nir, foldKnownLoad, nir_metadata_control_flow, const_cast<KnownBuffer*>(known)) || progress;
     }
     return true;
+}
+
+// knownBufferMask's walk: from each value that decides a branch back through what computed it, to the reads of the
+// buffer that it starts from
+void markDeciding(nir_shader* s, uint32_t binding, std::vector<uint8_t>* mask) {
+    std::vector<nir_def*> work;
+    std::unordered_set<nir_def*> seen;
+    auto push = [&](const nir_src& src) {
+        if (seen.insert(src.ssa).second) work.push_back(src.ssa);
+    };
+    auto known = [&](nir_intrinsic_instr* in) {
+        return in->intrinsic == nir_intrinsic_load_ubo && nir_src_is_const(in->src[0]) && nir_src_as_uint(in->src[0]) == binding;
+    };
+    nir_foreach_function_impl(impl, s) {
+        nir_foreach_block(block, impl) {
+            if (nir_if* nif = nir_block_get_following_if(block)) push(nif->condition);
+            nir_foreach_instr(instr, block) {
+                if (instr->type != nir_instr_type_intrinsic) continue;
+                nir_intrinsic_instr* in = nir_instr_as_intrinsic(instr);
+                if (in->intrinsic == nir_intrinsic_terminate_if || in->intrinsic == nir_intrinsic_demote_if) push(in->src[0]);
+                if (known(in) && !nir_src_is_const(in->src[1])) push(in->src[1]);
+            }
+        }
+    }
+    while (!work.empty()) {
+        nir_def* d = work.back();
+        work.pop_back();
+        nir_instr* p = d->parent_instr;
+        if (p->type == nir_instr_type_alu) {
+            nir_alu_instr* a = nir_instr_as_alu(p);
+            for (unsigned i = 0; i < nir_op_infos[a->op].num_inputs; i++) push(a->src[i].src);
+        } else if (p->type == nir_instr_type_phi) {
+            nir_foreach_phi_src(ps, nir_instr_as_phi(p)) push(ps->src);
+        } else if (p->type == nir_instr_type_intrinsic) {
+            nir_intrinsic_instr* in = nir_instr_as_intrinsic(p);
+            if (!known(in)) continue;
+            if (!nir_src_is_const(in->src[1])) {
+                push(in->src[1]);
+                continue;
+            }
+            const uint64_t at = nir_src_as_uint(in->src[1]), n = uint64_t(in->def.num_components) * (in->def.bit_size / 8);
+            for (uint64_t i = at; i < at + n && i < mask->size(); i++) (*mask)[i] = 0xff;
+        }
+    }
 }
 
 // IEEE half bits to float, for the lod clamps air_sampler_state keeps as halves
@@ -1200,6 +1255,7 @@ std::string stageCacheName(const void* bitcode, size_t size, const FunctionConst
     if (known != nullptr) {
         mix(&known->binding, sizeof(known->binding));
         mix(known->bytes.data(), known->bytes.size());
+        mix(known->mask.data(), known->mask.size());
     }
     char name[64];
     snprintf(name, sizeof(name), "/%016llx%016llx.stage", (unsigned long long)h[0], (unsigned long long)h[1]);
@@ -1335,6 +1391,24 @@ std::unique_ptr<CompiledStage> compileStage(const void* bitcode, size_t size, st
     }
     if (chosen != nullptr && !cached.empty()) stageCacheSave(cached, *chosen);
     return chosen;
+}
+
+bool knownBufferMask(const void* bitcode, size_t size, const FunctionConstants& constants, uint32_t binding, uint32_t length,
+                     std::vector<uint8_t>* mask, std::string* why) {
+    std::lock_guard<std::mutex> g(gCompilerLock);
+    if (theCompiler() == nullptr) return refuse(why, "ir3 has no compiler for chip " + std::to_string(compilerChip()));
+    Translation t;
+    if (!translate(bitcode, size, t, why, constants)) return false;
+    // the reads' offsets folded as translate folds them for a known buffer, and the function's variables made values,
+    // so that what a read gives can be followed to where it is used
+    nir_lower_vars_to_ssa(t.nir);
+    for (unsigned round = 0; round < 64; round++) {
+        nir_copy_prop(t.nir);
+        if (!nir_opt_constant_folding(t.nir)) break;
+    }
+    mask->assign(length, 0);
+    markDeciding(t.nir, binding, mask);
+    return true;
 }
 
 

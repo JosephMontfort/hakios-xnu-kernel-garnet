@@ -1344,6 +1344,38 @@ TEST(a_stage_compiled_for_its_constant_buffer_reads_none_of_it) {
     CHECK(other != nullptr && other->listing.find("c0.x") != std::string::npos);
 }
 
+// knownBufferMask: tri_cflat_fs's float4 is only written out, never branched on, so none of its bytes decide anything;
+// a stage compiled with that mask reads them at draw time, one compiled with every byte masked folds them as before
+TEST(only_the_masked_bytes_of_a_known_buffer_are_compiled_as_values) {
+    if (!hasCompiler()) {
+        std::printf("       (no compiler in this build: the known buffer's mask did not run)\n");
+        return;
+    }
+    std::vector<uint8_t> bc = bitcodeOf("tri_cflat_fs");
+    CHECK(!bc.empty());
+    if (bc.empty()) return;
+    std::string why;
+    std::vector<uint8_t> mask;
+    CHECK(knownBufferMask(bc.data(), bc.size(), {}, 0, 16, &mask, &why));
+    CHECK_EQ(mask.size(), size_t(16));
+    CHECK(std::count(mask.begin(), mask.end(), uint8_t(0)) == 16);
+    const float c[4] = {0.25f, 0.5f, 0.75f, 1.0f};
+    KnownBuffer known;
+    known.binding = 0;
+    known.bytes.assign(reinterpret_cast<const uint8_t*>(c), reinterpret_cast<const uint8_t*>(c) + 16);
+    known.mask = mask;
+    auto unmasked = compileStage(bc.data(), bc.size(), &why, {}, 0, &known);
+    CHECK(unmasked != nullptr && unmasked->listing.find("c0.x") != std::string::npos);
+    known.mask.assign(16, 0xff);
+    auto folded = compileStage(bc.data(), bc.size(), &why, {}, 0, &known);
+    CHECK(folded != nullptr && folded->listing.find("c0.") == std::string::npos);
+    // (half the float4 masked: the vec4 read is not wholly known, so it stays)
+    known.mask.assign(16, 0xff);
+    for (int i = 8; i < 16; i++) known.mask[i] = 0;
+    auto half = compileStage(bc.data(), bc.size(), &why, {}, 0, &known);
+    CHECK(half != nullptr && half->listing.find("c0.") != std::string::npos);
+}
+
 TEST(a_stage_compiled_without_the_preamble_is_taken_only_when_it_spills_less) {
     Kernel with{}, without{};
     with.pvtmemSize = 512, with.maxReg = 47;

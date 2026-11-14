@@ -151,7 +151,8 @@ public:
     void setProfileDraws(bool on) { profileDraws_ = on; }
     std::vector<DrawTime> drawTimes() const;
     // render::Options::gmem for this buffer's draws besides each draw's own (both must allow it): the C API's switch
-    void setGmem(bool on) { gmem_ = on; }
+    // (A7XX: whether metal_gmem=1 asked for it: the A7xx's tiles are drawn only then)
+    void setGmem(bool on, bool a7xx = false) { gmem_ = on; gmemA7xx_ = a7xx; }
     // GMEM's refinements off, for a bisect on the phone: kGmemWholeArea tiles the whole window whatever the draws touch,
     // kGmemEveryAttachment loads and stores every attachment, kGmemFetchBarrier orders a fetch by the barrier
     enum : uint32_t { kGmemWholeArea = 1, kGmemEveryAttachment = 2, kGmemFetchBarrier = 4 };
@@ -193,6 +194,7 @@ private:
     std::shared_ptr<Buffer> drawStamps_;
     void drawStamp(uint32_t slot);
     bool gmem_ = true;
+    bool gmemA7xx_ = false;
     uint32_t gmemOff_ = 0;
     uint32_t gmemMinDraws_ = 0;
     bool gmemBinning_ = false;

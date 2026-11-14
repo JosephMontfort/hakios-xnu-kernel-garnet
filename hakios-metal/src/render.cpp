@@ -2281,15 +2281,18 @@ bool gmemPlan(const RenderPass& pass, GmemPlan* plan, std::string* why) {
     }
     // GMEM below the colour cache in shares by bytes a pixel, each 16 KiB aligned (bins of whole 32 x 16 granules fit
     // their share whatever the bins' shape)
+    // (the A7xx keeps an eighth of its CCU's 64 KiB colour cache at GMEM's top, 504 KiB on the Adreno 710 with its
+    // one CCU, as encodeGmem's RB_CCU_CNTL puts it and turnip's ccu_offset_gmem; the A6xx a quarter per CCU)
+    const uint32_t top = pm4::isA7xx() ? a7xx::kGmemSize - a7xx::kNumCcu * 64u * 1024u / 8u : kGmemCcuColorOffset;
     GmemPlan p;
     uint32_t before = 0;
     for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
         const Attachment a = attachmentOf(pass, i);
         if (a.texture == nullptr) continue;
         p.bpp[i] = a.texture->info().bytesPerPixel;
-        p.base[i] = uint32_t(uint64_t(kGmemCcuColorOffset) * before / bytes) & ~0x3fffu;
+        p.base[i] = uint32_t(uint64_t(top) * before / bytes) & ~0x3fffu;
         before += p.bpp[i];
-        p.room[i] = (uint32_t(uint64_t(kGmemCcuColorOffset) * before / bytes) & ~0x3fffu) - p.base[i];
+        p.room[i] = (uint32_t(uint64_t(top) * before / bytes) & ~0x3fffu) - p.base[i];
     }
     const uint32_t whole[4] = {0, 0, W - 1, H - 1};
     if (!gmemTiles(&p, whole)) return refuse(why, "a bin too wide for GMEM");
@@ -2314,6 +2317,8 @@ bool gmemTiles(GmemPlan* plan, const uint32_t area[4]) {
     } else {
         p.cols = divUp(w, p.binW);
     }
+    // (tile_max_w/h: 1024 x 1024 for the FD710, freedreno_devices.py; 1024 x 1008 for the A6xx gen4)
+    const uint32_t kTileMaxH = pm4::isA7xx() ? a7xx::kTileMaxH : a6xx::kTileMaxH;
     uint32_t fit = kTileMaxH / kTileAlignH * kTileAlignH;
     for (uint32_t i = 0; i < kMaxColorOutputs; i++) {
         if (p.bpp[i] != 0) fit = std::min(fit, p.room[i] / (p.binW * p.bpp[i]) / kTileAlignH * kTileAlignH);
@@ -2894,11 +2899,12 @@ bool CommandBuffer::draw(const Program& program, const RenderPass& pass, const D
     if (options.generation == ChipGeneration::kA6xx && queue_.gpu().generation() == ChipGeneration::kA7xx) {
         options.generation = ChipGeneration::kA7xx;
     }
-    if (options.generation == ChipGeneration::kA7xx) {
-        // No GMEM tiles on the A7xx: every pass is drawn in sysmem (fd6_emit_sysmem_prep's path). The userland turns GMEM
-        // on by default (metal_gmem_draws=56, redwood's A6xx tuning), so this is the only gate. With it lifted (14
-        // November) encodeGmem's A7xx layout (RB_CCU_CNTL2, RB_UNKNOWN_8812 0, RB_BLIT_CLEAR_MODE) hung the 3D core on
-        // every boot, with or without metal_gmem=1: 14-17 resets each, only while passes of 28+ draws went to GMEM
+    if (options.generation == ChipGeneration::kA7xx && !gmemA7xx_) {
+        // GMEM tiles on the A7xx only when metal_gmem=1 asks (hakios_metal_cb_set_gmem's 2), not by the userland's
+        // default metal_gmem_draws=56 (redwood's A6xx tuning). Lifted for everyone on 14 November it hung the 3D core
+        // on every boot (14-17 resets each, only while passes of 28+ draws went to GMEM): the kernel had put the UCHE's
+        // window onto GMEM at 16 MB where the Adreno 710's KGSL leaves it at 0, so every framebuffer fetch of a tile at
+        // GMEM_BASE 0 faulted in the SMMU at address 0. The kernel now leaves the window as KGSL does.
         options.gmem = false;
         options.gmemBinning = false;
     }

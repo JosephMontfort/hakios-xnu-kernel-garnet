@@ -899,8 +899,8 @@ void hakios_metal_cb_counts(hakios_metal_cb* cb, unsigned* passes, unsigned* dra
 }
 
 void hakios_metal_cb_set_gmem(hakios_metal_cb* cb, int on) {
-    if (deferring(cb)) return cb->deferrer->post(&cb->pending, [cb, on] { cb->cb->setGmem(on != 0); });
-    cb->cb->setGmem(on != 0);
+    if (deferring(cb)) return cb->deferrer->post(&cb->pending, [cb, on] { cb->cb->setGmem(on != 0, on >= 2); });
+    cb->cb->setGmem(on != 0, on >= 2);
 }
 
 void hakios_metal_cb_set_gmem_off(hakios_metal_cb* cb, unsigned bits) {
@@ -1156,8 +1156,34 @@ hakios_metal_program* hakios_metal_program_new_bitcode_constants(const void* vsB
     return programOf(std::move(vs), std::move(fs), colorPixelFormat);
 }
 
+int hakios_metal_program_spec_mask(const void* fsBitcode, size_t fsSize, const hakios_metal_constant* fsConstants, unsigned fsCount, unsigned binding,
+                                   unsigned length, unsigned char* mask) {
+    if (fsBitcode == nullptr || fsSize == 0 || mask == nullptr || length == 0) {
+        failed("a buffer's mask needs the fragment function's bitcode and room for it");
+        return -1;
+    }
+    std::string why;
+    std::vector<uint8_t> m;
+    if (!knownBufferMask(fsBitcode, fsSize, constantsOf(fsConstants, fsCount), binding, length, &m, &why)) {
+        failed(why);
+        return -1;
+    }
+    int marked = 0;
+    for (unsigned i = 0; i < length; i++) {
+        mask[i] = i < m.size() ? m[i] : 0;
+        marked += mask[i] != 0;
+    }
+    return marked;
+}
+
 hakios_metal_program* hakios_metal_program_specialize(hakios_metal_program* base, const void* fsBitcode, size_t fsSize, const hakios_metal_constant* fsConstants,
                                                      unsigned fsCount, unsigned binding, const void* bytes, size_t length) {
+    return hakios_metal_program_specialize_masked(base, fsBitcode, fsSize, fsConstants, fsCount, binding, bytes, length, nullptr);
+}
+
+hakios_metal_program* hakios_metal_program_specialize_masked(hakios_metal_program* base, const void* fsBitcode, size_t fsSize,
+                                                            const hakios_metal_constant* fsConstants, unsigned fsCount, unsigned binding,
+                                                            const void* bytes, size_t length, const unsigned char* mask) {
     if (base == nullptr || fsBitcode == nullptr || fsSize == 0 || bytes == nullptr) {
         failed("a specialisation needs the program, its fragment function's bitcode and the buffer's bytes");
         return nullptr;
@@ -1166,6 +1192,7 @@ hakios_metal_program* hakios_metal_program_specialize(hakios_metal_program* base
     KnownBuffer known;
     known.binding = binding;
     known.bytes.assign(static_cast<const uint8_t*>(bytes), static_cast<const uint8_t*>(bytes) + length);
+    if (mask != nullptr) known.mask.assign(mask, mask + length);
     const Program& was = base->program->program;
     std::unique_ptr<CompiledStage> fs = compileStage(fsBitcode, fsSize, &why, constantsOf(fsConstants, fsCount), was.fsIboBase, &known);
     if (fs == nullptr) {

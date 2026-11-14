@@ -557,6 +557,9 @@ static BOOL hm_fps_on(void);                          /* metal_fps: command buff
 #define HM_CACHE_DIR  "/private/var/db/hakios-metal-cache"     /* compiled stages, kept across boots by var_store */
 #define HM_CACHE_SEED "/redwood/share/hakios-metal-cache"     /* the same, baked into the image (read-only) */
 static BOOL hm_gmem_on(void);                         /* metal_gmem=1: tiled rendering where a pass allows it */
+/* draws of an uber shader's pipeline since the last fps report: specialised, with the uber shader while their
+ * specialisation compiles, with it past the pipeline's 64 contents (hakiosProgramFor:) */
+static unsigned hm_spec_draws[3];
 - (void)hakiosShadowYCbCr:(IOSurfaceRef)surface format:(MTLPixelFormat)format;
 - (void)hakiosRefreshShadow;
 - (void)hakiosSetDeallocator:(void (^)(void *, NSUInteger))deallocator bytes:(void *)bytes length:(NSUInteger)length;
@@ -1209,6 +1212,11 @@ HM_REFUSES_OUT_LOUD
 	int _specBinding;
 	unsigned _specLength;
 	NSMutableDictionary *_specialised;
+	/* the bytes of that buffer that decide its branches (hakios_metal_program_spec_mask; 0xff each), the only ones a
+	 * specialisation is keyed and compiled by; _specMaskState 0 not asked, 1 being found, 2 found */
+	unsigned char _specMask[256];
+	int _specMaskState;
+	BOOL _specFull;   /* told that it has 64 */
 }
 - (instancetype)initWithHakiosDevice:(HakiosMetalDevice *)device program:(hakios_metal_program *)program
 			  descriptor:(MTLRenderPipelineDescriptor *)descriptor;
@@ -5141,7 +5149,7 @@ HM_REFUSES_OUT_LOUD
 	if (_cb != NULL) {
 		hakios_metal_cb_skip_refused(_cb, !hm_strict());
 		hakios_metal_cb_set_profile(_cb, hm_fps_on());
-		hakios_metal_cb_set_gmem(_cb, hm_gmem_on() || hm_gmem_draws() != 0);
+		hakios_metal_cb_set_gmem(_cb, hm_gmem_on() ? 2 : hm_gmem_draws() != 0);   /* 2: asked for, the A7xx's only way */
 		hakios_metal_cb_set_gmem_min_draws(_cb, hm_gmem_draws());
 		hakios_metal_cb_set_gmem_binning(_cb, (hm_gmem_off() & 16) == 0);   /* metal_gmem_off's 16: every draw in every tile */
 		hakios_metal_cb_set_null_fs_textures(_cb, (hm_gmem_off() & 32) != 0);   /* 32: no texture reads, to time the shaders alone */
@@ -5949,6 +5957,16 @@ hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb)
 
 			hakios_metal_buffer_counts(&made, &reused, &bytes);
 			hm_print("fps: ... buffers: %u made (%llu KB), %u taken again from the pool\n", made, bytes >> 10, reused);
+		}
+		{
+			unsigned spec = __atomic_exchange_n(&hm_spec_draws[0], 0, __ATOMIC_RELAXED);
+			unsigned wait = __atomic_exchange_n(&hm_spec_draws[1], 0, __ATOMIC_RELAXED);
+			unsigned full = __atomic_exchange_n(&hm_spec_draws[2], 0, __ATOMIC_RELAXED);
+
+			if (spec + wait + full != 0) {
+				hm_print("fps: ... uber shaders' draws: %u specialised, %u with the uber shader while theirs compiles (or was refused), "
+					 "%u with it past 64 contents\n", spec, wait, full);
+			}
 		}
 		if (hm_fps.drawCalls != 0) {
 			char by[200] = "";
@@ -7413,6 +7431,22 @@ HM_REFUSES_OUT_LOUD
 
 - (hakios_metal_program *)hakiosProgram { return _program; }
 
+/* boot-arg metal_specfull: a specialisation keyed and compiled by every byte of its buffer, not only those that decide
+ * the uber shader's branches (the A/B switch for hakios_metal_program_spec_mask) */
+static BOOL
+hm_spec_full(void)
+{
+	static int full = -1;
+
+	if (full < 0) {
+		char args[1024] = {0};
+		size_t size = sizeof(args) - 1;
+
+		full = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_specfull") != NULL;
+	}
+	return full != 0;
+}
+
 /* boot-arg metal_nospec: every draw with the pipeline's own program, no uber shader specialised */
 static BOOL
 hm_spec_off(void)
@@ -7451,6 +7485,8 @@ hm_spec_off(void)
 	_fsConstantCount = count < 64 ? count : 64;
 	memcpy(_fsConstants, constants, _fsConstantCount * sizeof(*constants));
 	_specialised = [[NSMutableDictionary alloc] init];
+	memset(_specMask, 0xff, sizeof(_specMask));
+	_specMaskState = hm_spec_full() ? 2 : 0;
 }
 
 /* the program for a draw whose fragment buffers are BUFFERS: the one compiled for what the deciding buffer holds, or
@@ -7465,31 +7501,94 @@ hm_spec_off(void)
 	const uint8_t *bytes = (const uint8_t *)hakios_metal_buffer_contents(buffers[_specBinding]);
 	const uint64_t length = hakios_metal_buffer_length(buffers[_specBinding]), at = offsets[_specBinding];
 	if (bytes == NULL || at > length || length - at < _specLength) return _program;
-	NSData *key = [NSData dataWithBytes:bytes + at length:_specLength];
 	hakios_metal_program *found = _program;
-	BOOL start = NO;
+	NSData *key = nil;
+	BOOL start = NO, findMask = NO;
 
 	@synchronized(self) {
-		id have = [_specialised objectForKey:key];
+		if (_specMaskState != 2) {
+			findMask = _specMaskState == 0;
+			_specMaskState = 1;
+			if (hm_fps_on()) __atomic_fetch_add(&hm_spec_draws[1], 1, __ATOMIC_RELAXED);
+		} else {
+			unsigned char masked[256];
 
-		if ([have isKindOfClass:[NSValue class]]) {
-			found = (hakios_metal_program *)[have pointerValue];
-		} else if (have == nil && [_specialised count] < 64) {
-			[_specialised setObject:[NSNull null] forKey:key];
-			start = YES;
+			for (unsigned i = 0; i < _specLength; i++) {
+				masked[i] = bytes[at + i] & _specMask[i];
+			}
+			key = [NSData dataWithBytes:masked length:_specLength];
+			id have = [_specialised objectForKey:key];
+
+			if ([have isKindOfClass:[NSValue class]]) {
+				found = (hakios_metal_program *)[have pointerValue];
+			} else if (have == nil && [_specialised count] < 64) {
+				[_specialised setObject:[NSNull null] forKey:key];
+				start = YES;
+			} else if (have == nil && !_specFull) {
+				_specFull = YES;
+				hm_print("specialise: %s: 64 contents of its buffer specialised for, the rest drawn with the uber shader\n",
+					 hakios_metal_program_name(_program));
+			}
+			if (hm_fps_on()) {
+				__atomic_fetch_add(&hm_spec_draws[found != _program ? 0 : have != nil || start ? 1 : 2], 1, __ATOMIC_RELAXED);
+			}
 		}
 	}
-	if (start) {
+	if (start || findMask) {
 		dispatch_once(&once, ^{
 			compiling = dispatch_queue_create("hakios.metal.specialise", DISPATCH_QUEUE_SERIAL);
 		});
+	}
+	if (findMask) {
+		/* which bytes decide the branches, found once (on the queue: it is the front end over the whole uber shader);
+		 * the draws until then are the uber shader's, as while a specialisation compiles */
+		[self retain];
+		dispatch_async(compiling, ^{
+			unsigned char mask[256];
+			struct timespec t0, t1;
+
+			clock_gettime(CLOCK_MONOTONIC, &t0);
+			int marked = hakios_metal_program_spec_mask([_fsAir bytes], [_fsAir length], _fsConstants, _fsConstantCount, (unsigned)_specBinding,
+								    _specLength, mask);
+			clock_gettime(CLOCK_MONOTONIC, &t1);
+			if (marked <= 0) {
+				memset(mask, 0xff, sizeof(mask));   /* none found (or refused): every byte, as before */
+			}
+			if (hm_fps_on() || marked < 0) {
+				char ranges[256] = "";
+				size_t used = 0;
+
+				for (unsigned i = 0; i < _specLength && used + 16 < sizeof(ranges);) {
+					unsigned j = i;
+
+					if (mask[i] == 0) {
+						i++;
+						continue;
+					}
+					while (j + 1 < _specLength && mask[j + 1] != 0) j++;
+					used += (size_t)snprintf(ranges + used, sizeof(ranges) - used, "%s%u-%u", used ? " " : "", i, j);
+					i = j + 1;
+				}
+				hm_print("specialise: %s: %d of the %u bytes of its buffer %d decide its branches (%s)%s%s, found in %.0f ms\n",
+					 hakios_metal_program_name(_program), marked, _specLength, _specBinding, ranges, marked < 0 ? ": " : "",
+					 marked < 0 ? hakios_metal_error() : "", (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6);
+			}
+			@synchronized(self) {
+				memcpy(_specMask, mask, _specLength);
+				_specMaskState = 2;
+			}
+			[self release];
+		});
+		return found;
+	}
+	if (start) {
 		[self retain];
 		dispatch_async(compiling, ^{
 			struct timespec t0, t1;
 
 			clock_gettime(CLOCK_MONOTONIC, &t0);
-			hakios_metal_program *p = hakios_metal_program_specialize(_program, [_fsAir bytes], [_fsAir length], _fsConstants, _fsConstantCount,
-										 (unsigned)_specBinding, [key bytes], [key length]);
+			hakios_metal_program *p = hakios_metal_program_specialize_masked(_program, [_fsAir bytes], [_fsAir length], _fsConstants,
+										 _fsConstantCount, (unsigned)_specBinding, [key bytes], [key length], _specMask);
 			clock_gettime(CLOCK_MONOTONIC, &t1);
 			if (p == NULL) {
 				hm_print("specialise: %s for its buffer %d: %s; its own program goes on\n", hakios_metal_program_name(_program), _specBinding,

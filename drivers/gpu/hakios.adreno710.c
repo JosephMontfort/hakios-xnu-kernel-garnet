@@ -69,6 +69,8 @@
  *   adreno_keep=1      with adreno=21: the GPU is not stopped again but kept for the system to draw
  *                      with, through the service HakiosGPU (see "the GPU kept on" below); it is
  *                      given back when the run ends (adreno_dirty=1: left as a panic leaves it)
+ *   adreno_hbb=N       Garnet: the highest bank bit the GPU's NC_MODE registers and Mesa's
+ *                      HIGHEST_BANK_BIT use (13..16; default 14, the phone's LPDDR4X)
  *   adreno_speed=N     step 17 asks the GMU for the 3D core's Nth speed:
  *                      For Garnet (Adreno 710):
  *                        1: 345 MHz, LowSVS (default)
@@ -351,6 +353,7 @@ static struct block gcc = { "gcc", 0x00100000, 0x80000 };
 #define GARNET_PDC_PHYS             0x0b270000UL    /* dt: gmu_pdc reg 0xb270000 0x10000 */
 
 static bool is_garnet_adreno = true;
+static uint32_t garnet_hbb = 14;        /* highest bank bit: 14 for Garnet's LPDDR4X (the phone's KGSL); adreno_hbb=N */
 
 static bool
 detect_garnet_adreno(void)
@@ -3183,13 +3186,14 @@ step_core_power(void)
 #define PTE_CORE                (PTE_GMU | PTE_UNPRIVILEGED)
 #define PTE_READ_ONLY           (1ull << 7)     /* Linux gives the core its microcode so (MSM_BO_GPU_READONLY) */
 /*
- * The ring is at 0x01300000, not Linux's 0x01000000: on the Adreno 710 KGSL puts the UCHE's window onto GMEM at
- * ALIGN(gmem_size, uche_gmem_alignment) = 16 MB (adreno.c, adreno_gen7.c: UCHE_GMEM_RANGE_MIN/MAX), and Mesa reads a
- * tile through the texture unit at that address (framebuffer fetch, fd6_gmem.cc; r2d resolves, fd6_blitter.cc). The
- * window [CORE_GMEM_ADDRESS, + 512K) must have nothing mapped in it.
+ * GMEM as the texture unit sees it (framebuffer fetch, fd6_gmem.cc; r2d resolves, fd6_blitter.cc) is at GPU address 0
+ * on the Adreno 710: KGSL's gen7_3_0 has no uche_gmem_alignment, so gen7_start never programs UCHE_GMEM_RANGE_MIN/MAX
+ * and the phone's own KGSL answers KGSL_PROP_UCHE_GMEM_VADDR = 0 (read off the device, 2026-11-14). Nothing is ever
+ * mapped below GPU_ADDRESSES_START but the core's own pages at 0x01100000 and up, so [0, 512K) stays free for it.
+ * (An earlier window at 16 MB here, with Mesa reading at 0, faulted every framebuffer fetch at address 0.)
  */
 #define CORE_RING_ADDRESS       0x01300000u
-#define CORE_GMEM_ADDRESS       0x01000000u     /* KGSL's uche_gmem_base for gen7_3_0; GET_PARAM GMEM_BASE */
+#define CORE_GMEM_ADDRESS       0x00000000u     /* KGSL_PROP_UCHE_GMEM_VADDR on the phone; GET_PARAM GMEM_BASE */
 #define CORE_GMEM_SIZE          0x00080000u     /* 512 KiB of GMEM */
 #define CORE_RING_SIZE          0x8000u         /* Linux's; 8192 words */
 #define CORE_SQE_ADDRESS        0x01100000u
@@ -3545,10 +3549,8 @@ step_core_start(void)
 		put(&gpu, "uche_cache_ways", UCHE_CACHE_WAYS, 0x00040004);
 		put(&gpu, "uche_gbif_gx_config", GPU_WORD(0x0e3a), 0x10240e0);
 		put(&gpu, "uche_cmdq_config", GPU_WORD(0x0e3c), 0x6690e);
-		/* the UCHE's window onto GMEM, where KGSL puts it for this GPU (adreno_gen7.c gen7_start): without it a
-		 * texture fetch of a tile (framebuffer fetch, an r2d resolve) reads whatever the address maps to */
-		put64(&gpu, "uche_gmem_range_min", UCHE_GMEM_RANGE_MIN, CORE_GMEM_ADDRESS);
-		put64(&gpu, "uche_gmem_range_max", UCHE_GMEM_RANGE_MAX, CORE_GMEM_ADDRESS + CORE_GMEM_SIZE - 1);
+		/* UCHE_GMEM_RANGE_MIN/MAX are left as they reset: KGSL's gen7_3_0 (uche_gmem_alignment 0) never writes
+		 * them, and GMEM is at 0 to the texture unit (CORE_GMEM_ADDRESS) */
 	} else {
 		put64(&gpu, "uche_write_range_max", UCHE_WRITE_RANGE_MAX, 0x0001ffffffffffc0ull);
 		put(&gpu, "uche_filter_cntl", UCHE_FILTER_CNTL, 0x804);
@@ -3562,15 +3564,18 @@ step_core_start(void)
 	put(&gpu, "cp_ahb_cntl", CP_AHB_CNTL, 1);
 	/*
 	 * How textures in the GPU's own tiled and compressed layouts are laid out in memory (Linux's
-	 * a6xx_calc_ubwc_config, a6xx_set_ubwc_config: highest bank bit 15 on Garnet, 14 on Redwood);
-	 * Mesa is told the same (hakios_gpu_parameter()).
+	 * a6xx_calc_ubwc_config, a6xx_set_ubwc_config). Garnet's LPDDR4X makes it highest bank bit 14: KGSL's
+	 * gen7_init overrides the gpulist's 15 for DDR type 7, and the phone's KGSL answers 14 (bank_bit 1, as
+	 * adreno_gen7.c gen7_start writes: RB 0x812, TPL1 0x2, SP 0x22, GRAS 0x20, UCHE 0x200000). Mesa is told
+	 * the same (hakios_gpu_parameter()); adreno_hbb=15 puts back the old values for a test.
 	 */
 	if (is_garnet_adreno) {
-		put(&gpu, "rb_nc_mode_cntl", GPU_WORD(0x8e08), (1u << 11) | (1u << 4) | (2u << 1));
-		put(&gpu, "tpl1_nc_mode_cntl", GPU_WORD(0xb604), 2u << 1);
-		put(&gpu, "sp_nc_mode_cntl", GPU_WORD(0xae02), (2u << 4) | (2u << 1));
-		put(&gpu, "gras_nc_mode_cntl", GPU_WORD(0x8602), 2u << 5);
-		put(&gpu, "uche_mode_cntl", GPU_WORD(0x0e01), 2u << 21);
+		const uint32_t bank = (garnet_hbb - 13) & 3;
+		put(&gpu, "rb_nc_mode_cntl", GPU_WORD(0x8e08), (1u << 11) | (1u << 4) | (bank << 1));
+		put(&gpu, "tpl1_nc_mode_cntl", GPU_WORD(0xb604), bank << 1);
+		put(&gpu, "sp_nc_mode_cntl", GPU_WORD(0xae02), (2u << 4) | (bank << 1));
+		put(&gpu, "gras_nc_mode_cntl", GPU_WORD(0x8602), bank << 5);
+		put(&gpu, "uche_mode_cntl", GPU_WORD(0x0e01), bank << 21);
 	} else {
 		put(&gpu, "rb_nc_mode_cntl", GPU_WORD(0x8e08), 1u << 11 | 1u << 4 | 1u << 1);
 		put(&gpu, "tpl1_nc_mode_cntl", GPU_WORD(0xb604), 1u << 1);
@@ -4195,8 +4200,8 @@ bool
 hakios_gpu_parameter(uint32_t which, uint64_t *value)
 {
 	switch (which) {
-	case 0x06:                              /* GMEM_BASE: the UCHE's window onto GMEM (step "uche_gmem_range_min") */
-		*value = is_garnet_adreno ? CORE_GMEM_ADDRESS : 0;
+	case 0x06:                              /* GMEM_BASE: where the texture unit sees GMEM */
+		*value = 0;                     /* both: Garnet's KGSL answers UCHE_GMEM_VADDR 0 */
 		return true;
 	case 0x01:                              /* GPU_ID: none, the chip ID says it */
 	case 0x08:                              /* PP_PGTABLE */
@@ -4223,7 +4228,7 @@ hakios_gpu_parameter(uint32_t which, uint64_t *value)
 		*value = 1;
 		return true;
 	case 0x10:                              /* HIGHEST_BANK_BIT */
-		*value = is_garnet_adreno ? 15 : 14;
+		*value = is_garnet_adreno ? garnet_hbb : 14;
 		return true;
 	case 0x12:                              /* UBWC_SWIZZLE */
 		*value = 6;
@@ -5005,6 +5010,12 @@ hakios_adreno_init(void)
 	PE_parse_boot_argn("gpu", &gpu_arg, sizeof(gpu_arg));
 	PE_parse_boot_argn("garnet_gpu", &gpu_arg, sizeof(gpu_arg));
 	PE_parse_boot_argn("gpu_log", &gpu_log, sizeof(gpu_log));
+	{
+		uint32_t hbb = 0;
+		if (PE_parse_boot_argn("adreno_hbb", &hbb, sizeof(hbb)) && hbb >= 13 && hbb <= 16) {
+			garnet_hbb = hbb;
+		}
+	}
 	if (PE_parse_boot_argn("detlog", &gDetLog, sizeof(gDetLog)) && gDetLog) {
 		if (gpu_log < 2) {
 			gpu_log = 2;
