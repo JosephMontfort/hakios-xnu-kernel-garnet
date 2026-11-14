@@ -557,9 +557,6 @@ static BOOL hm_fps_on(void);                          /* metal_fps: command buff
 #define HM_CACHE_DIR  "/private/var/db/hakios-metal-cache"     /* compiled stages, kept across boots by var_store */
 #define HM_CACHE_SEED "/redwood/share/hakios-metal-cache"     /* the same, baked into the image (read-only) */
 static BOOL hm_gmem_on(void);                         /* metal_gmem=1: tiled rendering where a pass allows it */
-/* draws of an uber shader's pipeline since the last fps report: specialised, with the uber shader while their
- * specialisation compiles, with it past the pipeline's 64 contents (hakiosProgramFor:) */
-static unsigned hm_spec_draws[3];
 - (void)hakiosShadowYCbCr:(IOSurfaceRef)surface format:(MTLPixelFormat)format;
 - (void)hakiosRefreshShadow;
 - (void)hakiosSetDeallocator:(void (^)(void *, NSUInteger))deallocator bytes:(void *)bytes length:(NSUInteger)length;
@@ -5616,6 +5613,9 @@ hm_shadow_targets(MTLRenderPassDescriptor *d, id<MTLCommandBuffer> cb)
  * not run yet. The object is retained across its own flight and released by the callback, so a buffer an application
  * released right after -commit lives until its handlers have run, as Metal's do.
  */
+/* draws of an uber shader's pipeline since the last fps report: specialised, with the uber shader while their
+ * specialisation compiles, with it past the pipeline's 64 contents (hakiosProgramFor:) */
+static unsigned hm_spec_draws[3];
 /*
  * boot-arg metal_fps (a diagnostic): every two seconds of a process's command buffers, how many frames it presented, how
  * many buffers it committed, how long the GPU was busy with them, how long -commit kept the caller's thread and how
