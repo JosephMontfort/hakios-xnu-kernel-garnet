@@ -89,6 +89,8 @@
 #include <sys/sysctl.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <dispatch/dispatch.h>
 #import <Metal/Metal.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -377,6 +379,150 @@ hm_now(void)
 		mach_timebase_info(&timebase);
 	}
 	return (double)mach_absolute_time() * timebase.numer / timebase.denom / 1e9;
+}
+
+/* the same clock in nanoseconds, for the panel's timings (kern.hakios.fb_period_ns, fb_scan_ns) */
+static uint64_t
+hm_now_ns(void)
+{
+	static mach_timebase_info_data_t timebase;
+
+	if (timebase.denom == 0) {
+		mach_timebase_info(&timebase);
+	}
+	return mach_absolute_time() * timebase.numer / timebase.denom;
+}
+
+/*
+ * Presenting on the panel's scan.
+ *
+ * The display reads its framebuffer from the top down, one scan at a time. A present that lands in the middle of a
+ * scan changes rows the display has not read yet and rows it already has: a tear, or a frame made of two. Metal's
+ * -presentDrawable:atTime: and -presentDrawable:afterMinimumDuration: exist to land a present before a scan, but
+ * until now this driver took no notice of either, and -presentDrawable: presented as soon as the GPU was done.
+ *
+ * The kernel measures the panel's scan (fb_beam) and publishes its length and the time until the next one begins.
+ * This pacer uses them: it holds a present until shortly before a scan, and never sends two presents into one scan.
+ * It is a filter, not a queue of its own -- the kernel still queues whatever arrives -- and it is off with
+ * metal_pace=0.
+ */
+static void hm_fps_note(BOOL present, double gpu, double latency, hakios_metal_cb *cb);
+
+static dispatch_queue_t hm_present_queue;
+static dispatch_semaphore_t hm_present_slots;
+static dispatch_once_t hm_present_once;
+static uint64_t hm_present_last_ns;
+
+static uint64_t
+hm_panel_period_ns(void)
+{
+	uint64_t ns = 0;
+	size_t len = sizeof(ns);
+
+	if (sysctlbyname("kern.hakios.fb_period_ns", &ns, &len, NULL, 0) != 0) {
+		return 0;
+	}
+	return ns;
+}
+
+static uint64_t
+hm_panel_scan_ns(void)
+{
+	uint64_t ns = 0;
+	size_t len = sizeof(ns);
+
+	if (sysctlbyname("kern.hakios.fb_scan_ns", &ns, &len, NULL, 0) != 0) {
+		return 0;
+	}
+	return ns;
+}
+
+static BOOL
+hm_pace_on(void)
+{
+	static int on = -1;
+	char args[4096];
+	size_t size = sizeof(args);
+
+	if (on < 0) {
+		on = 1;
+		if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0) {
+			if (size >= sizeof(args)) size = sizeof(args) - 1;
+			args[size] = '\0';
+			on = strstr(args, "metal_pace=0") == NULL;
+		}
+	}
+	return on != 0;
+}
+
+static void
+hm_present_on_panel(id drawable, uint64_t target_ns, uint64_t gap_ns, BOOL note)
+{
+	dispatch_once(&hm_present_once, ^{
+		hm_present_queue = dispatch_queue_create("hakios.metal.present", DISPATCH_QUEUE_SERIAL);
+		hm_present_slots = dispatch_semaphore_create(2);
+	});
+	if (!hm_pace_on()) {
+		[drawable present];
+		[drawable release];
+		if (note) hm_fps_note(YES, 0, 0, NULL);
+		return;
+	}
+	/* the caller's retain (in -presentDrawable:) is handed to this queue, which releases it after presenting */
+	dispatch_semaphore_wait(hm_present_slots, DISPATCH_TIME_FOREVER);
+	dispatch_async(hm_present_queue, ^{
+		uint64_t period = hm_panel_period_ns();
+		uint64_t now = hm_now_ns();
+		uint64_t deadline = now;
+		uint64_t scan = hm_panel_scan_ns();
+
+		if (period == 0) period = 8333333;      /* the panel at 120 Hz, until the kernel has measured it */
+		if (scan != 0) {
+			uint64_t lead = period / 12;    /* the copy of the last rows lands about a millisecond after it starts */
+			uint64_t before = now + scan;
+
+			deadline = before > lead ? before - lead : before;
+			if (deadline <= now) {
+				deadline = before + period;      /* already inside the lead: the scan after next */
+			}
+		}
+		if (target_ns > deadline) deadline = target_ns;
+		/* one present a scan, and no sooner than the caller asked */
+		if (hm_present_last_ns != 0) {
+			uint64_t gap = gap_ns != 0 ? gap_ns : period;
+			uint64_t after = hm_present_last_ns + gap;
+
+			if (after > deadline) deadline = after;
+		}
+		hm_present_last_ns = deadline;
+		if (deadline > now) {
+			struct timespec ts;
+			uint64_t wait = deadline - now;
+
+			ts.tv_sec = (time_t)(wait / 1000000000ULL);
+			ts.tv_nsec = (long)(wait % 1000000000ULL);
+			while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
+			}
+		}
+		[drawable present];
+		[drawable release];
+		dispatch_semaphore_signal(hm_present_slots);   /* the next present may come while the statistics are written */
+		if (note) hm_fps_note(YES, 0, 0, NULL);
+	});
+}
+
+static BOOL
+hm_presentable(id drawable)
+{
+	if (drawable == nil) {
+		return NO;
+	}
+	if (![drawable respondsToSelector:@selector(present)]) {
+		hm_print("refused: -presentDrawable: of a %s, which does not answer -present; nothing is presented\n",
+		    class_getName(object_getClass(drawable)));
+		return NO;
+	}
+	return YES;
 }
 
 /* --- the private base classes, by name only ---------------------------------------------------------------- */
@@ -6508,32 +6654,38 @@ hm_completed(hakios_metal_cb *cb, void *context)
  * buffer has COMPLETED, which is what Metal's display waits for anyway; the drawable is kept until then */
 - (void)presentDrawable:(id)drawable
 {
-	if (drawable == nil) {
+	if (!hm_presentable(drawable)) {
 		return;
 	}
-	if (![drawable respondsToSelector:@selector(present)]) {
-		hm_print("refused: -presentDrawable: of a %s, which does not answer -present; nothing is presented\n", class_getName(object_getClass(drawable)));
-		return;
-	}
-	[drawable retain];
+	[drawable retain];          /* hm_present_on_panel: takes this reference and releases it */
 	[self addCompletedHandler:^(id<MTLCommandBuffer> cb) {
 		(void)cb;
-		[drawable present];
-		[drawable release];
-		hm_fps_note(YES, 0, 0, NULL);
+		hm_present_on_panel(drawable, 0, 0, YES);
 	}];
 }
 
 - (void)presentDrawable:(id)drawable atTime:(CFTimeInterval)time
 {
-	(void)time;
-	[self presentDrawable:drawable];
+	if (!hm_presentable(drawable)) {
+		return;
+	}
+	[drawable retain];          /* hm_present_on_panel: takes this reference and releases it */
+	[self addCompletedHandler:^(id<MTLCommandBuffer> cb) {
+		(void)cb;
+		hm_present_on_panel(drawable, time > 0 ? (uint64_t)(time * 1e9) : 0, 0, YES);
+	}];
 }
 
 - (void)presentDrawable:(id)drawable afterMinimumDuration:(CFTimeInterval)duration
 {
-	(void)duration;
-	[self presentDrawable:drawable];
+	if (!hm_presentable(drawable)) {
+		return;
+	}
+	[drawable retain];          /* hm_present_on_panel: takes this reference and releases it */
+	[self addCompletedHandler:^(id<MTLCommandBuffer> cb) {
+		(void)cb;
+		hm_present_on_panel(drawable, 0, duration > 0 ? (uint64_t)(duration * 1e9) : 0, YES);
+	}];
 }
 
 /* MTLEvent orders work across command buffers and queues (HakiosMetalEvent): a signal is applied when this buffer

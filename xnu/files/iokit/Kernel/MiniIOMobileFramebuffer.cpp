@@ -211,6 +211,11 @@ panel_thread_start(thread_continue_t continuation, void * parameter, thread_t * 
 SYSCTL_DECL(_kern_hakios);
 static uint32_t gShownSurface;
 SYSCTL_UINT(_kern_hakios, OID_AUTO, fb_surface, CTLFLAG_RD | CTLFLAG_LOCKED, &gShownSurface, 0, "the IOSurface last put on the panel");
+/* the panel's scan, for a client that presents on it: one scan's length, and how long until the next begins */
+static uint64_t gBeamPeriodNs;
+static uint64_t gBeamPeriodTicks;
+static uint32_t gBeamLines;
+static vm_offset_t gBeamIntf;
 
 #define SWAP_QUEUE              2                       /* frames that may wait for the panel at most (fb_queue) */
 static TUNABLE(uint32_t, gQueue, "fb_queue", 2);
@@ -307,6 +312,34 @@ refreshHz(void)
 {
 	return gRefreshHz >= 1 && gRefreshHz <= 240 ? gRefreshHz : kFBRefreshHz;
 }
+/* kern.hakios.fb_period_ns: one scan of the panel, 0 until the beam probe has measured it */
+static int
+fb_period_ns_sysctl SYSCTL_HANDLER_ARGS
+{
+	uint64_t ns = gBeamPeriodNs;
+
+	return SYSCTL_OUT(req, &ns, sizeof(ns));
+}
+SYSCTL_PROC(_kern_hakios, OID_AUTO, fb_period_ns, CTLTYPE_QUAD | CTLFLAG_RD | CTLFLAG_LOCKED, 0, 0,
+    fb_period_ns_sysctl, "Q", "one scan of the panel, in nanoseconds");
+/* kern.hakios.fb_scan_ns: nanoseconds from now until the next scan of the panel begins */
+static int
+fb_scan_ns_sysctl SYSCTL_HANDLER_ARGS
+{
+	uint64_t ns = 0;
+
+	if (gBeamIntf != 0 && gBeamPeriodTicks != 0 && gBeamLines != 0) {
+		uint32_t line = *(volatile uint32_t *)(gBeamIntf + INTF_LINE_COUNT);
+		uint64_t now = mach_absolute_time();
+		uint64_t scan = now - gBeamPeriodTicks * (line < gBeamLines ? line : gBeamLines - 1) / gBeamLines +
+		    gBeamPeriodTicks;
+
+		absolutetime_to_nanoseconds(scan - now, &ns);
+	}
+	return SYSCTL_OUT(req, &ns, sizeof(ns));
+}
+SYSCTL_PROC(_kern_hakios, OID_AUTO, fb_scan_ns, CTLTYPE_QUAD | CTLFLAG_RD | CTLFLAG_LOCKED, 0, 0,
+    fb_scan_ns_sysctl, "Q", "nanoseconds until the next scan of the panel");
 static inline uint32_t
 recStep(void)
 {
@@ -954,7 +987,7 @@ IOMobileFramebuffer::beamProbe(void)
 {
 	vm_offset_t intf;
 	uint32_t first, frames, line, lines = 0, smallest = ~0u;
-	uint64_t began, ended, until;
+	uint64_t began, ended, until, period_ns;
 
 	IOSleep(60000);
 	intf = panelInterface();
@@ -996,10 +1029,14 @@ IOMobileFramebuffer::beamProbe(void)
 	}
 	fBeamLines = lines + 1;
 	fBeamPeriod = (ended - began) / frames;
-	absolutetime_to_nanoseconds(fBeamPeriod, &began);
+	absolutetime_to_nanoseconds(fBeamPeriod, &period_ns);
 	IOLog("MiniIOMobileFramebuffer: fb_beam: the panel's scan is %u lines, %llu us: frames are written behind it from now on\n",
-	    fBeamLines, began / NSEC_PER_USEC);
+	    fBeamLines, period_ns / NSEC_PER_USEC);
+	gBeamLines = fBeamLines;
+	gBeamPeriodTicks = fBeamPeriod;
+	gBeamPeriodNs = period_ns;
 	__atomic_thread_fence(__ATOMIC_RELEASE);
+	gBeamIntf = intf;
 	fBeamIntf = intf;
 }
 
